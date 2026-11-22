@@ -38,6 +38,15 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public void ConnectReturnsDeviceNotFoundWhenNoDeviceIsPresent()
+    {
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter());
+
+        Assert.AreEqual(TasollerPlusConnectResult.DeviceNotFound, device.Connect());
+        Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);
+    }
+
+    [TestMethod]
     public void TryGetLatestInputReturnsTheFirstReportAfterConnecting()
     {
         var report = CreateInputReport(FirstReportSliderValue);
@@ -267,10 +276,9 @@ public sealed class TasollerPlusDeviceTests
             _connections = new Queue<ITasollerPlusConnection>(connections);
         }
 
-        public TasollerPlusConnectResult Open(out ITasollerPlusConnection? connection)
+        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
         {
-            connection = _connections.Dequeue();
-            return TasollerPlusConnectResult.Success;
+            return _connections.TryDequeue(out connection) ? TasollerPlusTransportOpenResult.Opened : TasollerPlusTransportOpenResult.DeviceNotFound;
         }
     }
 
@@ -302,10 +310,10 @@ public sealed class TasollerPlusDeviceTests
             EnqueueTransfer(null, new TasollerPlusReadTransferResult(default, TasollerPlusReadTransferStatus.Failed));
         }
 
-        public TasollerPlusConnectResult Open(out ITasollerPlusConnection? connection)
+        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
         {
             connection = this;
-            return TasollerPlusConnectResult.Success;
+            return TasollerPlusTransportOpenResult.Opened;
         }
 
         public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)

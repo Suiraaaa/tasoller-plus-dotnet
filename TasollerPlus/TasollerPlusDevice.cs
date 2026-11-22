@@ -40,13 +40,18 @@ namespace TasollerPlus
 
             Disconnect();
 
-            var result = _transport.Open(out var connection);
-            if (result == TasollerPlusConnectResult.Success && connection != null)
+            var openResult = _transport.Open(out var connection);
+            if (openResult == TasollerPlusTransportOpenResult.DeviceNotFound)
+            {
+                return TasollerPlusConnectResult.DeviceNotFound;
+            }
+
+            if (openResult == TasollerPlusTransportOpenResult.Opened && connection != null)
             {
                 _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
             }
 
-            return result;
+            return TasollerPlusConnectResult.Success;
         }
 
         public void Disconnect()
