@@ -4,6 +4,8 @@ namespace TasollerPlus
 {
     public readonly struct TasollerPlusInputFrame
     {
+        private const byte Fn1ButtonMask = 0b1000_0000;
+        private const byte Fn2ButtonMask = 0b0100_0000;
         private const int AirBeamCount = 6;
         private const byte BottomAirBeamMask = 0b0010_0000;
 
@@ -25,6 +27,10 @@ namespace TasollerPlus
 
         public long SequenceNumber => _sequenceNumber;
 
+        public bool IsFn1Pressed => IsDigitalInputActive(Fn1ButtonMask);
+
+        public bool IsFn2Pressed => IsDigitalInputActive(Fn2ButtonMask);
+
         public byte GetSliderValue(int index)
         {
             if ((uint)index >= (uint)_sliderValues.Length)
@@ -43,7 +49,12 @@ namespace TasollerPlus
             }
 
             var beamMask = BottomAirBeamMask >> index;
-            return (_digitalInputs & beamMask) != 0;
+            return IsDigitalInputActive(beamMask);
+        }
+
+        private bool IsDigitalInputActive(int mask)
+        {
+            return (_digitalInputs & mask) != 0;
         }
     }
 }

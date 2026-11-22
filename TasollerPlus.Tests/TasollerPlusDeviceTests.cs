@@ -23,7 +23,11 @@ public sealed class TasollerPlusDeviceTests
     private const byte SecondReportSliderValue = 0x3C;
     private const byte ThirdReportSliderValue = 0xE1;
     private const byte FourthReportSliderValue = 0x78;
-    private const byte BothFnButtonsReportBits = 0b1100_0000;
+    private const byte NoDigitalInputsReportBits = 0;
+    private const byte Fn1PressedReportBit = 0b1000_0000;
+    private const byte Fn2PressedReportBit = 0b0100_0000;
+    private const byte BothFnButtonsReportBits = Fn1PressedReportBit | Fn2PressedReportBit;
+    private const byte AllAirBeamsBlockedReportBits = 0b0011_1111;
     private const int LedReportLength = 114;
     private const int SliderLedColorCount = 31;
     private const int AirTowerLedColorCount = 3;
@@ -86,6 +90,20 @@ public sealed class TasollerPlusDeviceTests
 
         var frame = WaitForLatestInput(device);
         Assert.AreEqual(FirstReportSliderValue, frame.GetSliderValue(FirstSliderIndex));
+    }
+
+    [TestMethod]
+    [DataRow(NoDigitalInputsReportBits, false, false)]
+    [DataRow(Fn1PressedReportBit, true, false)]
+    [DataRow(Fn2PressedReportBit, false, true)]
+    [DataRow(BothFnButtonsReportBits, true, true)]
+    [DataRow(AllAirBeamsBlockedReportBits, false, false)]
+    public void InputFrameReportsFnButtonStatesIndependently(byte digitalInputs, bool expectedFn1Pressed, bool expectedFn2Pressed)
+    {
+        var frame = ReadFrameWithDigitalInputs(digitalInputs);
+
+        Assert.AreEqual(expectedFn1Pressed, frame.IsFn1Pressed);
+        Assert.AreEqual(expectedFn2Pressed, frame.IsFn2Pressed);
     }
 
     [TestMethod]
