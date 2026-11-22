@@ -51,6 +51,20 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public void ConnectReturnsConnectionFailedWhenTheTransportCannotOpenTheDevice()
+    {
+        var adapter = new OpenResultAdapter(TasollerPlusTransportOpenResult.Failed);
+        AssertUnsuccessfulConnect(adapter, TasollerPlusConnectResult.ConnectionFailed);
+    }
+
+    [TestMethod]
+    public void ConnectReturnsConnectionFailedWhenTheConnectionIsMissing()
+    {
+        var adapter = new OpenResultAdapter(TasollerPlusTransportOpenResult.Opened);
+        AssertUnsuccessfulConnect(adapter, TasollerPlusConnectResult.ConnectionFailed);
+    }
+
+    [TestMethod]
     public void TryGetLatestInputReturnsTheFirstReportAfterConnecting()
     {
         var report = CreateInputReport(FirstReportSliderValue);

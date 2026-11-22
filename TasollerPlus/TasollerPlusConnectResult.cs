@@ -5,6 +5,7 @@ namespace TasollerPlus
         Success,
         AlreadyConnected,
         DeviceNotFound,
-        MultipleDevicesFound
+        MultipleDevicesFound,
+        ConnectionFailed
     }
 }

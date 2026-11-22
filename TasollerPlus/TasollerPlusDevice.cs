@@ -49,10 +49,10 @@ namespace TasollerPlus
                     return TasollerPlusConnectResult.MultipleDevicesFound;
                 case TasollerPlusTransportOpenResult.Opened when connection != null:
                     _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
-                    break;
+                    return TasollerPlusConnectResult.Success;
+                default:
+                    return TasollerPlusConnectResult.ConnectionFailed;
             }
-
-            return TasollerPlusConnectResult.Success;
         }
 
         public void Disconnect()

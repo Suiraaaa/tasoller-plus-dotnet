@@ -2,7 +2,7 @@ namespace TasollerPlus
 {
     internal interface ITasollerPlusTransport
     {
-        // The connection is present when the result is Opened.
+        // Opened requires an open connection. Return null for the other results.
         TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection);
     }
 }

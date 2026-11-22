@@ -4,6 +4,7 @@ namespace TasollerPlus
     {
         Opened,
         DeviceNotFound,
-        MultipleDevicesFound
+        MultipleDevicesFound,
+        Failed
     }
 }
