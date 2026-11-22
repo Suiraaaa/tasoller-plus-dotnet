@@ -41,14 +41,15 @@ namespace TasollerPlus
             Disconnect();
 
             var openResult = _transport.Open(out var connection);
-            if (openResult == TasollerPlusTransportOpenResult.DeviceNotFound)
+            switch (openResult)
             {
-                return TasollerPlusConnectResult.DeviceNotFound;
-            }
-
-            if (openResult == TasollerPlusTransportOpenResult.Opened && connection != null)
-            {
-                _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
+                case TasollerPlusTransportOpenResult.DeviceNotFound:
+                    return TasollerPlusConnectResult.DeviceNotFound;
+                case TasollerPlusTransportOpenResult.MultipleDevicesFound:
+                    return TasollerPlusConnectResult.MultipleDevicesFound;
+                case TasollerPlusTransportOpenResult.Opened when connection != null:
+                    _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
+                    break;
             }
 
             return TasollerPlusConnectResult.Success;

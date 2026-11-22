@@ -40,10 +40,14 @@ public sealed class TasollerPlusDeviceTests
     [TestMethod]
     public void ConnectReturnsDeviceNotFoundWhenNoDeviceIsPresent()
     {
-        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter());
+        AssertUnsuccessfulConnect(new QueuedConnectionAdapter(), TasollerPlusConnectResult.DeviceNotFound);
+    }
 
-        Assert.AreEqual(TasollerPlusConnectResult.DeviceNotFound, device.Connect());
-        Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);
+    [TestMethod]
+    public void ConnectReturnsMultipleDevicesFoundWhenMoreThanOneDeviceMatches()
+    {
+        var adapter = new OpenResultAdapter(TasollerPlusTransportOpenResult.MultipleDevicesFound);
+        AssertUnsuccessfulConnect(adapter, TasollerPlusConnectResult.MultipleDevicesFound);
     }
 
     [TestMethod]
@@ -202,6 +206,13 @@ public sealed class TasollerPlusDeviceTests
         Assert.AreEqual(TasollerPlusConnectionStatus.InputReceiveError, device.Status);
     }
 
+    private static void AssertUnsuccessfulConnect(ITasollerPlusTransport transport, TasollerPlusConnectResult expectedResult)
+    {
+        using var device = new TasollerPlusDevice(transport);
+        Assert.AreEqual(expectedResult, device.Connect());
+        Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);
+    }
+
     private static void AssertConnectionEnded(TasollerPlusDevice device, SingleDeviceAdapter adapter, TasollerPlusConnectionStatus expectedStatus)
     {
         SpinWait.SpinUntil(() => device.Status == expectedStatus, InputAvailabilityTimeout);
@@ -265,6 +276,22 @@ public sealed class TasollerPlusDeviceTests
 
         var actualSliderValues = destination.Take(result.Count).Select(frame => frame.GetSliderValue(FirstSliderIndex)).ToArray();
         CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
+    }
+
+    internal sealed class OpenResultAdapter : ITasollerPlusTransport
+    {
+        private readonly TasollerPlusTransportOpenResult _result;
+
+        public OpenResultAdapter(TasollerPlusTransportOpenResult result)
+        {
+            _result = result;
+        }
+
+        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
+        {
+            connection = null;
+            return _result;
+        }
     }
 
     internal sealed class QueuedConnectionAdapter : ITasollerPlusTransport
