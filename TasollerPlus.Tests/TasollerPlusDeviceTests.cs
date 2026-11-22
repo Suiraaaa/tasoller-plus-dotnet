@@ -11,6 +11,7 @@ public sealed class TasollerPlusDeviceTests
     private const int OverflowTestCapacity = 2;
     private const int OverflowTestReportCount = 3;
     private const int SameTimestampReportCount = 2;
+    private const int NoPendingReportCount = 0;
     private const long SharedReceiveTimestamp = 123456;
     private const long ExpectedSequenceStep = 1;
     private const long ExpectedDroppedCount = 2;
@@ -107,6 +108,23 @@ public sealed class TasollerPlusDeviceTests
         Assert.AreEqual(ExpectedSequenceStep, second.SequenceNumber - first.SequenceNumber);
         Assert.AreEqual(SharedReceiveTimestamp, first.ReceivedTimestamp);
         Assert.AreEqual(SharedReceiveTimestamp, second.ReceivedTimestamp);
+    }
+
+    [TestMethod]
+    public void DisconnectClosesTheConnectionAndClearsInputs()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        AssertLatestSliderValue(device, FirstReportSliderValue);
+
+        device.Disconnect();
+
+        Assert.IsFalse(device.TryGetLatestInput(out _), "The latest input was still available after Disconnect().");
+
+        var destination = new TasollerPlusInputFrame[device.InputBufferCapacity];
+        Assert.AreEqual(NoPendingReportCount, device.ReadPendingInputs(destination).Count);
+        Assert.ThrowsExactly<InvalidOperationException>(() => adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue)));
     }
 
     private static SingleDeviceAdapter CreateAdapterWithReports(byte firstSliderValue, params byte[] subsequentSliderValues)

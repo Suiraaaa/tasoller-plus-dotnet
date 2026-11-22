@@ -43,6 +43,13 @@ namespace TasollerPlus
             return result;
         }
 
+        public void Disconnect()
+        {
+            var session = _session;
+            _session = null;
+            session?.Dispose();
+        }
+
         public bool TryGetLatestInput(out TasollerPlusInputFrame frame)
         {
             if (_session is { } session)
@@ -66,9 +73,7 @@ namespace TasollerPlus
 
         public void Dispose()
         {
-            var session = _session;
-            _session = null;
-            session?.Dispose();
+            Disconnect();
         }
     }
 }
