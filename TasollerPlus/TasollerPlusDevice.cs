@@ -33,9 +33,9 @@ namespace TasollerPlus
 
         public TasollerPlusConnectResult Connect()
         {
-            if (_session?.Status == TasollerPlusConnectionStatus.Connected)
+            if (Status == TasollerPlusConnectionStatus.Connected)
             {
-                return TasollerPlusConnectResult.Success;
+                return TasollerPlusConnectResult.AlreadyConnected;
             }
 
             Disconnect();

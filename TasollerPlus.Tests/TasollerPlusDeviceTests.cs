@@ -24,6 +24,20 @@ public sealed class TasollerPlusDeviceTests
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
     [TestMethod]
+    public void ConnectReturnsAlreadyConnectedWhenAConnectionIsActive()
+    {
+        var connection = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(connection));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, FirstReportSliderValue);
+
+        Assert.AreEqual(TasollerPlusConnectResult.AlreadyConnected, device.Connect());
+
+        connection.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
+    }
+
+    [TestMethod]
     public void TryGetLatestInputReturnsTheFirstReportAfterConnecting()
     {
         var report = CreateInputReport(FirstReportSliderValue);
@@ -132,7 +146,7 @@ public sealed class TasollerPlusDeviceTests
     {
         var firstConnection = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
         var secondConnection = CreateAdapterWithReports(ThirdReportSliderValue);
-        using var device = new TasollerPlusDevice(new ReconnectableDeviceAdapter(firstConnection, secondConnection));
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
         var lastFrameBeforeDisconnect = WaitForLatestSliderValue(device, SecondReportSliderValue);
@@ -244,11 +258,11 @@ public sealed class TasollerPlusDeviceTests
         CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
     }
 
-    internal sealed class ReconnectableDeviceAdapter : ITasollerPlusTransport
+    internal sealed class QueuedConnectionAdapter : ITasollerPlusTransport
     {
         private readonly Queue<ITasollerPlusConnection> _connections;
 
-        public ReconnectableDeviceAdapter(params ITasollerPlusConnection[] connections)
+        public QueuedConnectionAdapter(params ITasollerPlusConnection[] connections)
         {
             _connections = new Queue<ITasollerPlusConnection>(connections);
         }

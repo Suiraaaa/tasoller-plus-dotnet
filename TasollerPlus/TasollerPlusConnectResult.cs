@@ -2,6 +2,7 @@ namespace TasollerPlus
 {
     public enum TasollerPlusConnectResult
     {
-        Success
+        Success,
+        AlreadyConnected
     }
 }
