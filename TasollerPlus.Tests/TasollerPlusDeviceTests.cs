@@ -10,6 +10,9 @@ public sealed class TasollerPlusDeviceTests
     private const int FirstSliderIndex = 0;
     private const int OverflowTestCapacity = 2;
     private const int OverflowTestReportCount = 3;
+    private const int SameTimestampReportCount = 2;
+    private const long SharedReceiveTimestamp = 123456;
+    private const long ExpectedSequenceStep = 1;
     private const long ExpectedDroppedCount = 2;
     private const long NoDroppedReports = 0;
     private const byte FirstReportSliderValue = 0xA6;
@@ -84,6 +87,26 @@ public sealed class TasollerPlusDeviceTests
 
         var nextRead = device.ReadPendingInputs(destination);
         Assert.AreEqual(NoDroppedReports, nextRead.DroppedCount);
+    }
+
+    [TestMethod]
+    public void ReadPendingInputsReturnsConsecutiveSequenceNumbersForReportsWithTheSameTimestamp()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter, getTimestamp: () => SharedReceiveTimestamp);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        AssertLatestSliderValue(device, SecondReportSliderValue);
+
+        var destination = new TasollerPlusInputFrame[SameTimestampReportCount];
+        var result = device.ReadPendingInputs(destination);
+        Assert.AreEqual(destination.Length, result.Count);
+
+        var first = destination.First();
+        var second = destination.Last();
+        Assert.AreEqual(ExpectedSequenceStep, second.SequenceNumber - first.SequenceNumber);
+        Assert.AreEqual(SharedReceiveTimestamp, first.ReceivedTimestamp);
+        Assert.AreEqual(SharedReceiveTimestamp, second.ReceivedTimestamp);
     }
 
     private static SingleDeviceAdapter CreateAdapterWithReports(byte firstSliderValue, params byte[] subsequentSliderValues)

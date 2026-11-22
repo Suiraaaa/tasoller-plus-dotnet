@@ -12,14 +12,17 @@ namespace TasollerPlus
         private readonly Task _receiveTask;
         private readonly object _inputLock;
         private readonly int _inputBufferCapacity;
+        private readonly Func<long> _getTimestamp;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
         private TasollerPlusInputFrame? _latestInput;
         private long _droppedInputCount;
+        private long _lastSequenceNumber;
 
-        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity)
+        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp)
         {
             _connection = connection;
             _inputBufferCapacity = inputBufferCapacity;
+            _getTimestamp = getTimestamp;
 
             _receiveCancellation = new CancellationTokenSource();
             _inputLock = new object();
@@ -79,7 +82,9 @@ namespace TasollerPlus
             while (!cancellationToken.IsCancellationRequested)
             {
                 var bytesRead = await _connection.ReadInputAsync(buffer, cancellationToken).ConfigureAwait(false);
-                var decodedInput = TasollerPlusInputReport.Decode(buffer.AsSpan()[..bytesRead]);
+                var receivedTimestamp = _getTimestamp();
+                var sequenceNumber = _lastSequenceNumber + 1;
+                var decodedInput = TasollerPlusInputReport.Decode(buffer.AsSpan()[..bytesRead], receivedTimestamp, sequenceNumber);
                 if (!decodedInput.HasValue)
                 {
                     return;
@@ -101,6 +106,7 @@ namespace TasollerPlus
 
                 _pendingInputs.Enqueue(frame);
                 _latestInput = frame;
+                _lastSequenceNumber = frame.SequenceNumber;
             }
         }
     }

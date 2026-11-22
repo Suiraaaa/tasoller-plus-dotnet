@@ -12,6 +12,7 @@ namespace TasollerPlus
         }
 
         public int Count => _count;
+
         public long DroppedCount => _droppedCount;
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 
 namespace TasollerPlus
 {
@@ -8,12 +9,15 @@ namespace TasollerPlus
 
         private readonly ITasollerPlusTransport _transport;
         private readonly int _inputBufferCapacity;
+        private readonly Func<long> _getTimestamp;
         private TasollerPlusSession? _session;
 
-        internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity)
+        internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity, Func<long>? getTimestamp = null)
         {
             _transport = transport;
             _inputBufferCapacity = inputBufferCapacity;
+
+            _getTimestamp = getTimestamp ?? Stopwatch.GetTimestamp;
 
             if (inputBufferCapacity <= 0)
             {
@@ -33,7 +37,7 @@ namespace TasollerPlus
             var result = _transport.Open(out var connection);
             if (result == TasollerPlusConnectResult.Success && connection != null)
             {
-                _session = new TasollerPlusSession(connection, InputBufferCapacity);
+                _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp);
             }
 
             return result;

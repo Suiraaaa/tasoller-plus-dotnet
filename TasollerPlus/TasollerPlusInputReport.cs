@@ -10,14 +10,14 @@ namespace TasollerPlus
 
         private static readonly byte[] Header = { 0x44, 0x42, 0x54 };
 
-        public static TasollerPlusInputFrame? Decode(ReadOnlySpan<byte> report)
+        public static TasollerPlusInputFrame? Decode(ReadOnlySpan<byte> report, long receivedTimestamp, long sequenceNumber)
         {
             if (report.Length != Length || !report.StartsWith(Header))
             {
                 return null;
             }
 
-            return new TasollerPlusInputFrame(report.Slice(SliderValuesOffset, SliderValueCount));
+            return new TasollerPlusInputFrame(report.Slice(SliderValuesOffset, SliderValueCount), receivedTimestamp, sequenceNumber);
         }
     }
 }
