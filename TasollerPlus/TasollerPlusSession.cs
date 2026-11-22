@@ -108,7 +108,7 @@ namespace TasollerPlus
         {
             try
             {
-                _connectionCancellation.Cancel();
+                EndConnection(TasollerPlusConnectionStatus.Disconnected);
                 _connectionTask.GetAwaiter().GetResult();
             }
             finally

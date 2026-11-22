@@ -196,6 +196,32 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public async Task DisconnectKeepsDisconnectedStatusWhenItInterruptsLedSending()
+    {
+        var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), async cancellationToken =>
+        {
+            var writeResult = new TaskCompletionSource<TasollerPlusTransferStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = cancellationToken.Register(() => writeResult.TrySetResult(TasollerPlusTransferStatus.Failed));
+            writeStarted.SetResult();
+            return await writeResult.Task.ConfigureAwait(false);
+        });
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestInput(device);
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        await writeStarted.Task.WaitAsync(LedReportAvailabilityTimeout);
+
+        await Task.Run(device.Disconnect).WaitAsync(LedReportAvailabilityTimeout);
+
+        Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);
+        Assert.IsTrue(adapter.IsClosed);
+    }
+
+    [TestMethod]
     public void ReconnectingContinuesInputSequenceNumbers()
     {
         var firstConnection = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
@@ -253,7 +279,7 @@ public sealed class TasollerPlusDeviceTests
     public void LedSendFailureClosesTheConnectionAndPreservesTheFailureReason(bool deviceRemoved, TasollerPlusConnectionStatus expectedStatus)
     {
         var writeStatus = deviceRemoved ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
-        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), writeStatus);
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), _ => ValueTask.FromResult(writeStatus));
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
         WaitForLatestInput(device);
@@ -375,11 +401,11 @@ public sealed class TasollerPlusDeviceTests
         private readonly Channel<(byte[]? Report, TasollerPlusReadTransferResult Result)> _transfers;
         private readonly Channel<byte[]> _writtenLedReports;
         private readonly TaskCompletionSource _waitingForInput;
-        private readonly TasollerPlusTransferStatus _writeStatus;
+        private readonly Func<CancellationToken, ValueTask<TasollerPlusTransferStatus>>? _completeWriteAsync;
 
-        public SingleDeviceAdapter(byte[] firstReport, TasollerPlusTransferStatus writeStatus = TasollerPlusTransferStatus.Succeeded)
+        public SingleDeviceAdapter(byte[] firstReport, Func<CancellationToken, ValueTask<TasollerPlusTransferStatus>>? completeWriteAsync = null)
         {
-            _writeStatus = writeStatus;
+            _completeWriteAsync = completeWriteAsync;
 
             _transfers = Channel.CreateUnbounded<(byte[]? Report, TasollerPlusReadTransferResult Result)>();
             _writtenLedReports = Channel.CreateUnbounded<byte[]>();
@@ -430,17 +456,17 @@ public sealed class TasollerPlusDeviceTests
             return transfer.Result;
         }
 
-        public ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
+        public async ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_writeStatus != TasollerPlusTransferStatus.Succeeded)
+            var status = _completeWriteAsync is null ? TasollerPlusTransferStatus.Succeeded : await _completeWriteAsync(cancellationToken).ConfigureAwait(false);
+            if (status != TasollerPlusTransferStatus.Succeeded)
             {
-                return ValueTask.FromResult(_writeStatus);
+                return status;
             }
 
             var written = _writtenLedReports.Writer.TryWrite(report.ToArray());
-            var status = written ? TasollerPlusTransferStatus.Succeeded : TasollerPlusTransferStatus.Failed;
-            return ValueTask.FromResult(status);
+            return written ? TasollerPlusTransferStatus.Succeeded : TasollerPlusTransferStatus.Failed;
         }
 
         public ValueTask<byte[]> ReadWrittenLedReportAsync(CancellationToken cancellationToken)

@@ -71,8 +71,7 @@ namespace TasollerPlus
             finally
             {
                 _lastSequenceNumber = session.LastSequenceNumber;
-                var finalStatus = session.Status;
-                _disconnectedStatus = finalStatus == TasollerPlusConnectionStatus.Connected ? TasollerPlusConnectionStatus.Disconnected : finalStatus;
+                _disconnectedStatus = session.Status;
             }
         }
 
