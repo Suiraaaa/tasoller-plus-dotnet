@@ -157,16 +157,37 @@ public sealed class TasollerPlusDeviceTests
 
         adapter.RemoveDevice();
 
-        SpinWait.SpinUntil(() => device.Status == TasollerPlusConnectionStatus.DeviceRemoved, InputAvailabilityTimeout);
+        AssertConnectionEnded(device, adapter, TasollerPlusConnectionStatus.DeviceRemoved);
+
+        device.Disconnect();
         Assert.AreEqual(TasollerPlusConnectionStatus.DeviceRemoved, device.Status);
+    }
+
+    [TestMethod]
+    public void InputReceiveFailureClosesTheConnectionAndPreservesTheErrorStatus()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, FirstReportSliderValue);
+
+        adapter.FailInputRead();
+
+        AssertConnectionEnded(device, adapter, TasollerPlusConnectionStatus.InputReceiveError);
+
+        device.Disconnect();
+        Assert.AreEqual(TasollerPlusConnectionStatus.InputReceiveError, device.Status);
+    }
+
+    private static void AssertConnectionEnded(TasollerPlusDevice device, SingleDeviceAdapter adapter, TasollerPlusConnectionStatus expectedStatus)
+    {
+        SpinWait.SpinUntil(() => device.Status == expectedStatus, InputAvailabilityTimeout);
+        Assert.AreEqual(expectedStatus, device.Status);
         Assert.IsFalse(device.TryGetLatestInput(out _));
 
         var destination = new TasollerPlusInputFrame[device.InputBufferCapacity];
         Assert.AreEqual(NoPendingReportCount, device.ReadPendingInputs(destination).Count);
-        Assert.IsTrue(SpinWait.SpinUntil(() => adapter.IsClosed, InputAvailabilityTimeout), "The connection remained open after device removal.");
-
-        device.Disconnect();
-        Assert.AreEqual(TasollerPlusConnectionStatus.DeviceRemoved, device.Status);
+        Assert.IsTrue(SpinWait.SpinUntil(() => adapter.IsClosed, InputAvailabilityTimeout), "The connection remained open after reporting an end status.");
     }
 
     private static SingleDeviceAdapter CreateAdapterWithReports(byte firstSliderValue, params byte[] subsequentSliderValues)
@@ -241,28 +262,30 @@ public sealed class TasollerPlusDeviceTests
 
     internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlusConnection
     {
-        private readonly Channel<byte[]?> _reports;
+        private readonly Channel<(byte[]? Report, TasollerPlusReadTransferResult Result)> _transfers;
 
         public SingleDeviceAdapter(byte[] firstReport)
         {
-            _reports = Channel.CreateUnbounded<byte[]?>();
+            _transfers = Channel.CreateUnbounded<(byte[]? Report, TasollerPlusReadTransferResult Result)>();
 
             EnqueueInputReport(firstReport);
         }
 
-        public bool IsClosed => _reports.Reader.Completion.IsCompleted;
+        public bool IsClosed => _transfers.Reader.Completion.IsCompleted;
 
-        public void EnqueueInputReport(byte[]? report)
+        public void EnqueueInputReport(byte[] report)
         {
-            if (!_reports.Writer.TryWrite(report))
-            {
-                throw new InvalidOperationException("The test device is closed.");
-            }
+            EnqueueTransfer(report, new TasollerPlusReadTransferResult(report.Length));
         }
 
         public void RemoveDevice()
         {
-            EnqueueInputReport(null);
+            EnqueueTransfer(null, new TasollerPlusReadTransferResult(default, TasollerPlusReadTransferStatus.DeviceRemoved));
+        }
+
+        public void FailInputRead()
+        {
+            EnqueueTransfer(null, new TasollerPlusReadTransferResult(default, TasollerPlusReadTransferStatus.Failed));
         }
 
         public TasollerPlusConnectResult Open(out ITasollerPlusConnection? connection)
@@ -273,19 +296,26 @@ public sealed class TasollerPlusDeviceTests
 
         public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            var report = await _reports.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-            if (report is null)
+            var transfer = await _transfers.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (transfer.Report is { } report)
             {
-                return new TasollerPlusReadTransferResult(default, isDeviceRemoved: true);
+                report.AsSpan().CopyTo(buffer.Span);
             }
 
-            report.AsSpan().CopyTo(buffer.Span);
-            return new TasollerPlusReadTransferResult(report.Length);
+            return transfer.Result;
         }
 
         public void Dispose()
         {
-            _reports.Writer.TryComplete();
+            _transfers.Writer.TryComplete();
+        }
+
+        private void EnqueueTransfer(byte[]? report, TasollerPlusReadTransferResult result)
+        {
+            if (!_transfers.Writer.TryWrite((report, result)))
+            {
+                throw new InvalidOperationException("The test device is closed.");
+            }
         }
     }
 }

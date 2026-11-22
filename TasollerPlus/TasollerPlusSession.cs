@@ -107,9 +107,10 @@ namespace TasollerPlus
             while (!cancellationToken.IsCancellationRequested)
             {
                 var transfer = await connection.ReadInputAsync(buffer, cancellationToken).ConfigureAwait(false);
-                if (transfer.IsDeviceRemoved)
+                if (transfer.Status != TasollerPlusReadTransferStatus.Succeeded)
                 {
-                    HandleDeviceRemoval();
+                    var status = transfer.Status == TasollerPlusReadTransferStatus.DeviceRemoved ? TasollerPlusConnectionStatus.DeviceRemoved : TasollerPlusConnectionStatus.InputReceiveError;
+                    EndConnection(status);
                     return;
                 }
 
@@ -125,13 +126,13 @@ namespace TasollerPlus
             }
         }
 
-        private void HandleDeviceRemoval()
+        private void EndConnection(TasollerPlusConnectionStatus status)
         {
             lock (_inputLock)
             {
                 _latestInput = null;
                 _pendingInputs.Clear();
-                _status = TasollerPlusConnectionStatus.DeviceRemoved;
+                _status = status;
             }
 
             CloseConnection();

@@ -4,6 +4,7 @@ namespace TasollerPlus
     {
         Disconnected,
         Connected,
-        DeviceRemoved
+        DeviceRemoved,
+        InputReceiveError
     }
 }

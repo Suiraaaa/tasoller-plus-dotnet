@@ -3,16 +3,16 @@ namespace TasollerPlus
     internal readonly struct TasollerPlusReadTransferResult
     {
         private readonly int _bytesRead;
-        private readonly bool _isDeviceRemoved;
+        private readonly TasollerPlusReadTransferStatus _status;
 
-        public TasollerPlusReadTransferResult(int bytesRead, bool isDeviceRemoved = false)
+        public TasollerPlusReadTransferResult(int bytesRead, TasollerPlusReadTransferStatus status = TasollerPlusReadTransferStatus.Succeeded)
         {
             _bytesRead = bytesRead;
-            _isDeviceRemoved = isDeviceRemoved;
+            _status = status;
         }
 
         public int BytesRead => _bytesRead;
 
-        public bool IsDeviceRemoved => _isDeviceRemoved;
+        public TasollerPlusReadTransferStatus Status => _status;
     }
 }
