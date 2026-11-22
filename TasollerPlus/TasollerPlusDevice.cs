@@ -4,13 +4,24 @@ namespace TasollerPlus
 {
     public sealed class TasollerPlusDevice : IDisposable
     {
+        private const int DefaultInputBufferCapacity = 1024;
+
         private readonly ITasollerPlusTransport _transport;
+        private readonly int _inputBufferCapacity;
         private TasollerPlusSession? _session;
 
-        internal TasollerPlusDevice(ITasollerPlusTransport transport)
+        internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity)
         {
             _transport = transport;
+            _inputBufferCapacity = inputBufferCapacity;
+
+            if (inputBufferCapacity <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(inputBufferCapacity));
+            }
         }
+
+        public int InputBufferCapacity => _inputBufferCapacity;
 
         public TasollerPlusConnectResult Connect()
         {
@@ -22,7 +33,7 @@ namespace TasollerPlus
             var result = _transport.Open(out var connection);
             if (result == TasollerPlusConnectResult.Success && connection != null)
             {
-                _session = new TasollerPlusSession(connection);
+                _session = new TasollerPlusSession(connection, InputBufferCapacity);
             }
 
             return result;

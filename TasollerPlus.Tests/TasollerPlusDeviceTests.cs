@@ -8,8 +8,11 @@ public sealed class TasollerPlusDeviceTests
     private const int InputReportLength = 36;
     private const int FirstSliderReportOffset = 4;
     private const int FirstSliderIndex = 0;
+    private const int OverflowTestCapacity = 2;
+    private const int OverflowTestReportCount = 3;
     private const byte FirstReportSliderValue = 0xA6;
     private const byte SecondReportSliderValue = 0x3C;
+    private const byte ThirdReportSliderValue = 0xE1;
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
@@ -49,12 +52,21 @@ public sealed class TasollerPlusDeviceTests
         AssertLatestSliderValue(device, SecondReportSliderValue);
 
         var expectedSliderValues = new[] { FirstReportSliderValue, SecondReportSliderValue };
-        var destination = new TasollerPlusInputFrame[expectedSliderValues.Length];
-        var result = device.ReadPendingInputs(destination);
+        AssertPendingSliderValues(device, expectedSliderValues.Length, expectedSliderValues);
+    }
 
-        Assert.AreEqual(expectedSliderValues.Length, result.Count, "ReadPendingInputs() did not return both received reports.");
-        var actualSliderValues = destination.Select(frame => frame.GetSliderValue(FirstSliderIndex)).ToArray();
-        CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
+    [TestMethod]
+    public void ReadPendingInputsDropsTheOldestReportWhenTheBufferOverflows()
+    {
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue));
+        adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
+        adapter.EnqueueInputReport(CreateInputReport(ThirdReportSliderValue));
+        using var device = new TasollerPlusDevice(adapter, inputBufferCapacity: OverflowTestCapacity);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        AssertLatestSliderValue(device, ThirdReportSliderValue);
+
+        AssertPendingSliderValues(device, OverflowTestReportCount, SecondReportSliderValue, ThirdReportSliderValue);
     }
 
     private static byte[] CreateInputReport(byte firstSliderValue)
@@ -89,6 +101,16 @@ public sealed class TasollerPlusDeviceTests
         Assert.AreEqual<byte?>(expectedSliderValue, actualSliderValue, "TryGetLatestInput() did not return the expected slider value before the timeout.");
     }
 
+    private static void AssertPendingSliderValues(TasollerPlusDevice device, int destinationLength, params byte[] expectedSliderValues)
+    {
+        var destination = new TasollerPlusInputFrame[destinationLength];
+        var result = device.ReadPendingInputs(destination);
+        Assert.AreEqual(expectedSliderValues.Length, result.Count, "ReadPendingInputs() returned an unexpected number of reports.");
+
+        var actualSliderValues = destination.Take(result.Count).Select(frame => frame.GetSliderValue(FirstSliderIndex)).ToArray();
+        CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
+    }
+
     internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlusConnection
     {
         private readonly Channel<byte[]> _reports;
@@ -96,6 +118,7 @@ public sealed class TasollerPlusDeviceTests
         public SingleDeviceAdapter(byte[] firstReport)
         {
             _reports = Channel.CreateUnbounded<byte[]>();
+
             EnqueueInputReport(firstReport);
         }
 

@@ -11,15 +11,18 @@ namespace TasollerPlus
         private readonly CancellationTokenSource _receiveCancellation;
         private readonly Task _receiveTask;
         private readonly object _inputLock;
+        private readonly int _inputBufferCapacity;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
         private TasollerPlusInputFrame? _latestInput;
 
-        public TasollerPlusSession(ITasollerPlusConnection connection)
+        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity)
         {
             _connection = connection;
+            _inputBufferCapacity = inputBufferCapacity;
+
             _receiveCancellation = new CancellationTokenSource();
             _inputLock = new object();
-            _pendingInputs = new Queue<TasollerPlusInputFrame>();
+            _pendingInputs = new Queue<TasollerPlusInputFrame>(_inputBufferCapacity);
 
             var cancellationToken = _receiveCancellation.Token;
             _receiveTask = Task.Run(() => ReceiveInputsAsync(cancellationToken), cancellationToken);
@@ -79,12 +82,21 @@ namespace TasollerPlus
                     return;
                 }
 
-                var frame = decodedInput.Value;
-                lock (_inputLock)
+                StoreInput(decodedInput.Value);
+            }
+        }
+
+        private void StoreInput(TasollerPlusInputFrame frame)
+        {
+            lock (_inputLock)
+            {
+                if (_pendingInputs.Count == _inputBufferCapacity)
                 {
-                    _pendingInputs.Enqueue(frame);
-                    _latestInput = frame;
+                    _pendingInputs.Dequeue();
                 }
+
+                _pendingInputs.Enqueue(frame);
+                _latestInput = frame;
             }
         }
     }
