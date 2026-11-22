@@ -23,8 +23,10 @@ public sealed class TasollerPlusDeviceTests
     private const int LedReportLength = 114;
     private const int SliderLedColorCount = 31;
     private const int AirTowerLedColorCount = 3;
-    private const string ExpectedLedReportPrefixHex = "444C02123456";
+    private const string ExpectedFirstLedReportPrefixHex = "444C02123456";
+    private const string ExpectedLatestLedReportPrefixHex = "444C026789AB";
     private static readonly RgbColor FirstSliderLedColor = new RgbColor(0x12, 0x34, 0x56);
+    private static readonly RgbColor LatestSliderLedColor = new RgbColor(0x67, 0x89, 0xAB);
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
@@ -108,12 +110,46 @@ public sealed class TasollerPlusDeviceTests
         var leftAir = new RgbColor[AirTowerLedColorCount];
         var rightAir = new RgbColor[AirTowerLedColorCount];
         slider[FirstSliderIndex] = FirstSliderLedColor;
-        var expectedReport = new byte[LedReportLength];
-        Convert.FromHexString(ExpectedLedReportPrefixHex).AsSpan().CopyTo(expectedReport);
+        var expectedReport = CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex);
 
         Assert.IsTrue(device.TrySetLedColors(slider, leftAir, rightAir), "The connected device did not accept the LED colors.");
         var actualReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
         CollectionAssert.AreEqual(expectedReport, actualReport);
+    }
+
+    [TestMethod]
+    public async Task TrySetLedColorsSendsLatestPendingColorsAfterCurrentWrite()
+    {
+        var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), async cancellationToken =>
+        {
+            if (firstWriteStarted.TrySetResult())
+            {
+                await finishFirstWrite.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return TasollerPlusTransferStatus.Succeeded;
+        });
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        await firstWriteStarted.Task.WaitAsync(timeout.Token);
+
+        slider[FirstSliderIndex] = default;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        slider[FirstSliderIndex] = LatestSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        finishFirstWrite.SetResult();
+
+        var firstReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
+        var nextReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
+        CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex), firstReport);
+        CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedLatestLedReportPrefixHex), nextReport, "The next write did not contain the most recent pending colors.");
     }
 
     [TestMethod]
@@ -327,6 +363,13 @@ public sealed class TasollerPlusDeviceTests
         var report = new byte[InputReportLength];
         InputReportHeader.CopyTo(report);
         report[FirstSliderReportOffset] = firstSliderValue;
+        return report;
+    }
+
+    private static byte[] CreateExpectedLedReport(string prefixHex)
+    {
+        var report = new byte[LedReportLength];
+        Convert.FromHexString(prefixHex).AsSpan().CopyTo(report);
         return report;
     }
 

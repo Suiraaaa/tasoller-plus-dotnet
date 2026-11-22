@@ -7,12 +7,12 @@ namespace TasollerPlus
 {
     internal sealed class TasollerPlusSession : IDisposable
     {
-        private const int MaxPendingLedReports = 1;
+        private const int LedReportSignalCapacity = 1;
 
         private readonly CancellationTokenSource _connectionCancellation;
         private readonly Task _connectionTask;
         private readonly object _stateLock;
-        private readonly SemaphoreSlim _ledReportReady;
+        private readonly SemaphoreSlim _pendingLedReportSignal;
         private readonly int _inputBufferCapacity;
         private readonly Func<long> _getTimestamp;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
@@ -30,7 +30,7 @@ namespace TasollerPlus
 
             _connectionCancellation = new CancellationTokenSource();
             _stateLock = new object();
-            _ledReportReady = new SemaphoreSlim(initialCount: 0, maxCount: MaxPendingLedReports);
+            _pendingLedReportSignal = new SemaphoreSlim(initialCount: 0, maxCount: LedReportSignalCapacity);
             _pendingInputs = new Queue<TasollerPlusInputFrame>(_inputBufferCapacity);
             _status = TasollerPlusConnectionStatus.Connected;
 
@@ -93,11 +93,11 @@ namespace TasollerPlus
                     return false;
                 }
 
-                var shouldWakeSender = _pendingLedReport is null;
+                var shouldSignalSender = _pendingLedReport is null;
                 _pendingLedReport = report;
-                if (shouldWakeSender)
+                if (shouldSignalSender)
                 {
-                    _ledReportReady.Release();
+                    _pendingLedReportSignal.Release();
                 }
 
                 return true;
@@ -114,7 +114,7 @@ namespace TasollerPlus
             finally
             {
                 _connectionCancellation.Dispose();
-                _ledReportReady.Dispose();
+                _pendingLedReportSignal.Dispose();
             }
         }
 
@@ -177,7 +177,7 @@ namespace TasollerPlus
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await _ledReportReady.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await _pendingLedReportSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
                 var report = TakePendingLedReport();
                 if (report is null)
                 {
