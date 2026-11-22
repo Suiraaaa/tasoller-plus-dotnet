@@ -6,6 +6,8 @@ namespace TasollerPlus.Tests;
 public sealed class TasollerPlusDeviceTests
 {
     private const int InputReportLength = 36;
+    private const int ShortInputReportLength = InputReportLength - 1;
+    private const int InputHeaderStartOffset = 0;
     private const int DigitalInputsReportOffset = 3;
     private const int FirstSliderReportOffset = 4;
     private const int FirstSliderIndex = 0;
@@ -23,6 +25,8 @@ public sealed class TasollerPlusDeviceTests
     private const byte SecondReportSliderValue = 0x3C;
     private const byte ThirdReportSliderValue = 0xE1;
     private const byte FourthReportSliderValue = 0x78;
+    private const byte ValidInputHeaderFirstByte = (byte)'D';
+    private const byte InvalidInputHeaderFirstByte = (byte)'X';
     private const byte NoDigitalInputsReportBits = 0;
     private const byte Fn1PressedReportBit = 0b1000_0000;
     private const byte Fn2PressedReportBit = 0b0100_0000;
@@ -211,6 +215,27 @@ public sealed class TasollerPlusDeviceTests
 
         var expectedSliderValues = new[] { FirstReportSliderValue, SecondReportSliderValue };
         AssertPendingSliderValues(device, expectedSliderValues.Length, expectedSliderValues);
+    }
+
+    [TestMethod]
+    [DataRow(InputReportLength, InvalidInputHeaderFirstByte)]
+    [DataRow(ShortInputReportLength, ValidInputHeaderFirstByte)]
+    public void InputReceptionSkipsAnInvalidReport(int reportLength, byte headerFirstByte)
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        var firstFrame = WaitForLatestInput(device);
+
+        var invalidReport = CreateInputReport(SecondReportSliderValue)[..reportLength];
+        invalidReport[InputHeaderStartOffset] = headerFirstByte;
+        adapter.EnqueueInputReport(invalidReport);
+        adapter.EnqueueInputReport(CreateInputReport(ThirdReportSliderValue));
+
+        var nextFrame = WaitForLatestSliderValue(device, ThirdReportSliderValue);
+        Assert.AreEqual(TasollerPlusConnectionStatus.Connected, device.Status);
+        Assert.AreEqual(firstFrame.SequenceNumber + ExpectedSequenceStep, nextFrame.SequenceNumber);
+        AssertPendingSliderValues(device, device.InputBufferCapacity, FirstReportSliderValue, ThirdReportSliderValue);
     }
 
     [TestMethod]

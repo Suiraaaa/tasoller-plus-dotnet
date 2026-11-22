@@ -164,12 +164,10 @@ namespace TasollerPlus
                 var receivedTimestamp = _getTimestamp();
                 var sequenceNumber = _lastSequenceNumber + 1;
                 var decodedInput = TasollerPlusInputReport.Decode(buffer.AsSpan()[..transfer.BytesRead], receivedTimestamp, sequenceNumber);
-                if (!decodedInput.HasValue)
+                if (decodedInput.HasValue)
                 {
-                    return;
+                    StoreInput(decodedInput.Value);
                 }
-
-                StoreInput(decodedInput.Value);
             }
         }
 
