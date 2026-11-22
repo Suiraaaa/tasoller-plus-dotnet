@@ -6,8 +6,11 @@ namespace TasollerPlus.Tests;
 public sealed class TasollerPlusDeviceTests
 {
     private const int InputReportLength = 36;
+    private const int DigitalInputsReportOffset = 3;
     private const int FirstSliderReportOffset = 4;
     private const int FirstSliderIndex = 0;
+    private const int AirBeamCount = 6;
+    private const int BelowBottomAirBeamIndex = -1;
     private const int OverflowTestCapacity = 2;
     private const int OverflowTestReportCount = 3;
     private const int SameTimestampReportCount = 2;
@@ -20,6 +23,7 @@ public sealed class TasollerPlusDeviceTests
     private const byte SecondReportSliderValue = 0x3C;
     private const byte ThirdReportSliderValue = 0xE1;
     private const byte FourthReportSliderValue = 0x78;
+    private const byte BothFnButtonsReportBits = 0b1100_0000;
     private const int LedReportLength = 114;
     private const int SliderLedColorCount = 31;
     private const int AirTowerLedColorCount = 3;
@@ -27,6 +31,7 @@ public sealed class TasollerPlusDeviceTests
     private const string ExpectedLatestLedReportPrefixHex = "444C026789AB";
     private static readonly RgbColor FirstSliderLedColor = new RgbColor(0x12, 0x34, 0x56);
     private static readonly RgbColor LatestSliderLedColor = new RgbColor(0x67, 0x89, 0xAB);
+    private static readonly byte[] AirBeamReportBitsFromBottom = { 0b0010_0000, 0b0001_0000, 0b0000_1000, 0b0000_0100, 0b0000_0010, 0b0000_0001 };
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
@@ -81,6 +86,31 @@ public sealed class TasollerPlusDeviceTests
 
         var frame = WaitForLatestInput(device);
         Assert.AreEqual(FirstReportSliderValue, frame.GetSliderValue(FirstSliderIndex));
+    }
+
+    [TestMethod]
+    public void IsAirBlockedReportsTheStateOfEachBeamFromBottomToTop()
+    {
+        for (var blockedIndex = 0; blockedIndex < AirBeamReportBitsFromBottom.Length; blockedIndex++)
+        {
+            var digitalInputs = (byte)(BothFnButtonsReportBits | AirBeamReportBitsFromBottom[blockedIndex]);
+            var frame = ReadFrameWithDigitalInputs(digitalInputs);
+
+            for (var index = 0; index < AirBeamCount; index++)
+            {
+                Assert.AreEqual(index == blockedIndex, frame.IsAirBlocked(index), $"Unexpected AIR state at index {index} with beam {blockedIndex} blocked.");
+            }
+        }
+    }
+
+    [TestMethod]
+    [DataRow(BelowBottomAirBeamIndex)]
+    [DataRow(AirBeamCount)]
+    public void IsAirBlockedRejectsAnIndexOutsideTheBeamRange(int index)
+    {
+        var frame = ReadFrameWithDigitalInputs(BothFnButtonsReportBits);
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => frame.IsAirBlocked(index));
     }
 
     [TestMethod]
@@ -364,6 +394,15 @@ public sealed class TasollerPlusDeviceTests
         InputReportHeader.CopyTo(report);
         report[FirstSliderReportOffset] = firstSliderValue;
         return report;
+    }
+
+    private static TasollerPlusInputFrame ReadFrameWithDigitalInputs(byte digitalInputs)
+    {
+        var report = CreateInputReport(FirstReportSliderValue);
+        report[DigitalInputsReportOffset] = digitalInputs;
+        using var device = new TasollerPlusDevice(new SingleDeviceAdapter(report));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        return WaitForLatestInput(device);
     }
 
     private static byte[] CreateExpectedLedReport(string prefixHex)

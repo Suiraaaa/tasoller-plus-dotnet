@@ -4,12 +4,17 @@ namespace TasollerPlus
 {
     public readonly struct TasollerPlusInputFrame
     {
+        private const int AirBeamCount = 6;
+        private const byte BottomAirBeamMask = 0b0010_0000;
+
         private readonly ReadOnlyMemory<byte> _sliderValues;
+        private readonly byte _digitalInputs;
         private readonly long _receivedTimestamp;
         private readonly long _sequenceNumber;
 
-        internal TasollerPlusInputFrame(ReadOnlySpan<byte> sliderValues, long receivedTimestamp, long sequenceNumber)
+        internal TasollerPlusInputFrame(ReadOnlySpan<byte> sliderValues, byte digitalInputs, long receivedTimestamp, long sequenceNumber)
         {
+            _digitalInputs = digitalInputs;
             _receivedTimestamp = receivedTimestamp;
             _sequenceNumber = sequenceNumber;
 
@@ -28,6 +33,17 @@ namespace TasollerPlus
             }
 
             return _sliderValues.Span[index];
+        }
+
+        public bool IsAirBlocked(int index)
+        {
+            if ((uint)index >= AirBeamCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            var beamMask = BottomAirBeamMask >> index;
+            return (_digitalInputs & beamMask) != 0;
         }
     }
 }

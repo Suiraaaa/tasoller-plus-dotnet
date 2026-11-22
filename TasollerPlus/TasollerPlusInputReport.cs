@@ -4,7 +4,8 @@ namespace TasollerPlus
 {
     internal static class TasollerPlusInputReport
     {
-        private const int SliderValuesOffset = 4;
+        private const int DigitalInputsOffset = 3;
+        private const int SliderValuesOffset = DigitalInputsOffset + sizeof(byte);
         private const int SliderValueCount = 32;
         public const int Length = SliderValuesOffset + SliderValueCount;
 
@@ -17,7 +18,9 @@ namespace TasollerPlus
                 return null;
             }
 
-            return new TasollerPlusInputFrame(report.Slice(SliderValuesOffset, SliderValueCount), receivedTimestamp, sequenceNumber);
+            var digitalInputs = report[DigitalInputsOffset];
+            var sliderValues = report.Slice(SliderValuesOffset, SliderValueCount);
+            return new TasollerPlusInputFrame(sliderValues, digitalInputs, receivedTimestamp, sequenceNumber);
         }
     }
 }
