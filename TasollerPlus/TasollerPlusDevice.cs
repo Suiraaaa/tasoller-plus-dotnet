@@ -39,6 +39,16 @@ namespace TasollerPlus
             return false;
         }
 
+        public TasollerPlusInputReadResult ReadPendingInputs(TasollerPlusInputFrame[] destination)
+        {
+            if (destination is null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            return _session?.ReadPendingInputs(destination) ?? default;
+        }
+
         public void Dispose()
         {
             var session = _session;

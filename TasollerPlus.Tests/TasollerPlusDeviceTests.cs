@@ -31,21 +31,30 @@ public sealed class TasollerPlusDeviceTests
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        var latestSliderValue = WaitForLatestInput(device).GetSliderValue(FirstSliderIndex);
-        Assert.AreEqual(FirstReportSliderValue, latestSliderValue);
+        var firstFrame = WaitForLatestInput(device);
+        Assert.AreEqual(FirstReportSliderValue, firstFrame.GetSliderValue(FirstSliderIndex));
 
         adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
-        SpinWait.SpinUntil(() =>
-        {
-            if (device.TryGetLatestInput(out var frame))
-            {
-                latestSliderValue = frame.GetSliderValue(FirstSliderIndex);
-            }
+        AssertLatestSliderValue(device, SecondReportSliderValue);
+    }
 
-            return latestSliderValue == SecondReportSliderValue;
-        }, InputAvailabilityTimeout);
+    [TestMethod]
+    public void ReadPendingInputsReturnsReportsInReceiveOrder()
+    {
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue));
+        adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        Assert.AreEqual(SecondReportSliderValue, latestSliderValue, "TryGetLatestInput() did not return the second input report.");
+        AssertLatestSliderValue(device, SecondReportSliderValue);
+
+        var expectedSliderValues = new[] { FirstReportSliderValue, SecondReportSliderValue };
+        var destination = new TasollerPlusInputFrame[expectedSliderValues.Length];
+        var result = device.ReadPendingInputs(destination);
+
+        Assert.AreEqual(expectedSliderValues.Length, result.Count, "ReadPendingInputs() did not return both received reports.");
+        var actualSliderValues = destination.Select(frame => frame.GetSliderValue(FirstSliderIndex)).ToArray();
+        CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
     }
 
     private static byte[] CreateInputReport(byte firstSliderValue)
@@ -64,12 +73,29 @@ public sealed class TasollerPlusDeviceTests
         return frame;
     }
 
+    private static void AssertLatestSliderValue(TasollerPlusDevice device, byte expectedSliderValue)
+    {
+        var actualSliderValue = default(byte?);
+        SpinWait.SpinUntil(() =>
+        {
+            if (device.TryGetLatestInput(out var frame))
+            {
+                actualSliderValue = frame.GetSliderValue(FirstSliderIndex);
+            }
+
+            return actualSliderValue == expectedSliderValue;
+        }, InputAvailabilityTimeout);
+
+        Assert.AreEqual<byte?>(expectedSliderValue, actualSliderValue, "TryGetLatestInput() did not return the expected slider value before the timeout.");
+    }
+
     internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlusConnection
     {
-        private readonly Channel<byte[]> _reports = Channel.CreateUnbounded<byte[]>();
+        private readonly Channel<byte[]> _reports;
 
         public SingleDeviceAdapter(byte[] firstReport)
         {
+            _reports = Channel.CreateUnbounded<byte[]>();
             EnqueueInputReport(firstReport);
         }
 
