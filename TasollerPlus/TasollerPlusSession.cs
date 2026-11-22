@@ -7,16 +7,17 @@ namespace TasollerPlus
 {
     internal sealed class TasollerPlusSession : IDisposable
     {
-        private readonly ITasollerPlusConnection _connection;
         private readonly CancellationTokenSource _receiveCancellation;
         private readonly Task _receiveTask;
         private readonly object _inputLock;
         private readonly int _inputBufferCapacity;
         private readonly Func<long> _getTimestamp;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
+        private ITasollerPlusConnection? _connection;
         private TasollerPlusInputFrame? _latestInput;
         private long _droppedInputCount;
         private long _lastSequenceNumber;
+        private TasollerPlusConnectionStatus _status;
 
         public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber)
         {
@@ -28,9 +29,10 @@ namespace TasollerPlus
             _receiveCancellation = new CancellationTokenSource();
             _inputLock = new object();
             _pendingInputs = new Queue<TasollerPlusInputFrame>(_inputBufferCapacity);
+            _status = TasollerPlusConnectionStatus.Connected;
 
             var cancellationToken = _receiveCancellation.Token;
-            _receiveTask = Task.Run(() => ReceiveInputsAsync(cancellationToken), cancellationToken);
+            _receiveTask = Task.Run(() => ReceiveInputsAsync(connection, cancellationToken), cancellationToken);
         }
 
         public long LastSequenceNumber
@@ -40,6 +42,17 @@ namespace TasollerPlus
                 lock (_inputLock)
                 {
                     return _lastSequenceNumber;
+                }
+            }
+        }
+
+        public TasollerPlusConnectionStatus Status
+        {
+            get
+            {
+                lock (_inputLock)
+                {
+                    return _status;
                 }
             }
         }
@@ -83,20 +96,26 @@ namespace TasollerPlus
             finally
             {
                 _receiveCancellation.Dispose();
-                _connection.Dispose();
+                CloseConnection();
             }
         }
 
-        private async Task ReceiveInputsAsync(CancellationToken cancellationToken)
+        private async Task ReceiveInputsAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
         {
             var buffer = new byte[TasollerPlusInputReport.Length];
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                var bytesRead = await _connection.ReadInputAsync(buffer, cancellationToken).ConfigureAwait(false);
+                var transfer = await connection.ReadInputAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (transfer.IsDeviceRemoved)
+                {
+                    HandleDeviceRemoval();
+                    return;
+                }
+
                 var receivedTimestamp = _getTimestamp();
                 var sequenceNumber = _lastSequenceNumber + 1;
-                var decodedInput = TasollerPlusInputReport.Decode(buffer.AsSpan()[..bytesRead], receivedTimestamp, sequenceNumber);
+                var decodedInput = TasollerPlusInputReport.Decode(buffer.AsSpan()[..transfer.BytesRead], receivedTimestamp, sequenceNumber);
                 if (!decodedInput.HasValue)
                 {
                     return;
@@ -104,6 +123,23 @@ namespace TasollerPlus
 
                 StoreInput(decodedInput.Value);
             }
+        }
+
+        private void HandleDeviceRemoval()
+        {
+            lock (_inputLock)
+            {
+                _latestInput = null;
+                _pendingInputs.Clear();
+                _status = TasollerPlusConnectionStatus.DeviceRemoved;
+            }
+
+            CloseConnection();
+        }
+
+        private void CloseConnection()
+        {
+            Interlocked.Exchange(ref _connection, null)?.Dispose();
         }
 
         private void StoreInput(TasollerPlusInputFrame frame)

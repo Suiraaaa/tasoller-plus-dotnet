@@ -12,6 +12,7 @@ namespace TasollerPlus
         private readonly Func<long> _getTimestamp;
         private TasollerPlusSession? _session;
         private long _lastSequenceNumber;
+        private TasollerPlusConnectionStatus _disconnectedStatus;
 
         internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity, Func<long>? getTimestamp = null)
         {
@@ -28,12 +29,16 @@ namespace TasollerPlus
 
         public int InputBufferCapacity => _inputBufferCapacity;
 
+        public TasollerPlusConnectionStatus Status => _session?.Status ?? _disconnectedStatus;
+
         public TasollerPlusConnectResult Connect()
         {
-            if (_session != null)
+            if (_session?.Status == TasollerPlusConnectionStatus.Connected)
             {
                 return TasollerPlusConnectResult.Success;
             }
+
+            Disconnect();
 
             var result = _transport.Open(out var connection);
             if (result == TasollerPlusConnectResult.Success && connection != null)
@@ -60,6 +65,8 @@ namespace TasollerPlus
             finally
             {
                 _lastSequenceNumber = session.LastSequenceNumber;
+                var finalStatus = session.Status;
+                _disconnectedStatus = finalStatus == TasollerPlusConnectionStatus.Connected ? TasollerPlusConnectionStatus.Disconnected : finalStatus;
             }
         }
 

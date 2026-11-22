@@ -6,6 +6,6 @@ namespace TasollerPlus
 {
     internal interface ITasollerPlusConnection : IDisposable
     {
-        ValueTask<int> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken);
+        ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken);
     }
 }
