@@ -18,11 +18,12 @@ namespace TasollerPlus
         private long _droppedInputCount;
         private long _lastSequenceNumber;
 
-        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp)
+        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber)
         {
             _connection = connection;
             _inputBufferCapacity = inputBufferCapacity;
             _getTimestamp = getTimestamp;
+            _lastSequenceNumber = lastSequenceNumber;
 
             _receiveCancellation = new CancellationTokenSource();
             _inputLock = new object();
@@ -30,6 +31,17 @@ namespace TasollerPlus
 
             var cancellationToken = _receiveCancellation.Token;
             _receiveTask = Task.Run(() => ReceiveInputsAsync(cancellationToken), cancellationToken);
+        }
+
+        public long LastSequenceNumber
+        {
+            get
+            {
+                lock (_inputLock)
+                {
+                    return _lastSequenceNumber;
+                }
+            }
         }
 
         public bool TryGetLatestInput(out TasollerPlusInputFrame frame)

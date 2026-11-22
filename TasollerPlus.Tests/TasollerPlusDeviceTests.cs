@@ -45,7 +45,7 @@ public sealed class TasollerPlusDeviceTests
         Assert.AreEqual(FirstReportSliderValue, firstFrame.GetSliderValue(FirstSliderIndex));
 
         adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
-        AssertLatestSliderValue(device, SecondReportSliderValue);
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
     }
 
     [TestMethod]
@@ -55,7 +55,7 @@ public sealed class TasollerPlusDeviceTests
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        AssertLatestSliderValue(device, SecondReportSliderValue);
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
 
         var expectedSliderValues = new[] { FirstReportSliderValue, SecondReportSliderValue };
         AssertPendingSliderValues(device, expectedSliderValues.Length, expectedSliderValues);
@@ -68,7 +68,7 @@ public sealed class TasollerPlusDeviceTests
         using var device = new TasollerPlusDevice(adapter, inputBufferCapacity: OverflowTestCapacity);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        AssertLatestSliderValue(device, ThirdReportSliderValue);
+        WaitForLatestSliderValue(device, ThirdReportSliderValue);
 
         AssertPendingSliderValues(device, OverflowTestReportCount, SecondReportSliderValue, ThirdReportSliderValue);
     }
@@ -80,7 +80,7 @@ public sealed class TasollerPlusDeviceTests
         using var device = new TasollerPlusDevice(adapter, inputBufferCapacity: OverflowTestCapacity);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        AssertLatestSliderValue(device, FourthReportSliderValue);
+        WaitForLatestSliderValue(device, FourthReportSliderValue);
 
         var destination = new TasollerPlusInputFrame[OverflowTestCapacity];
         var firstRead = device.ReadPendingInputs(destination);
@@ -97,7 +97,7 @@ public sealed class TasollerPlusDeviceTests
         using var device = new TasollerPlusDevice(adapter, getTimestamp: () => SharedReceiveTimestamp);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
-        AssertLatestSliderValue(device, SecondReportSliderValue);
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
 
         var destination = new TasollerPlusInputFrame[SameTimestampReportCount];
         var result = device.ReadPendingInputs(destination);
@@ -116,7 +116,7 @@ public sealed class TasollerPlusDeviceTests
         var adapter = CreateAdapterWithReports(FirstReportSliderValue);
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
-        AssertLatestSliderValue(device, FirstReportSliderValue);
+        WaitForLatestSliderValue(device, FirstReportSliderValue);
 
         device.Disconnect();
 
@@ -125,6 +125,24 @@ public sealed class TasollerPlusDeviceTests
         var destination = new TasollerPlusInputFrame[device.InputBufferCapacity];
         Assert.AreEqual(NoPendingReportCount, device.ReadPendingInputs(destination).Count);
         Assert.ThrowsExactly<InvalidOperationException>(() => adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue)));
+    }
+
+    [TestMethod]
+    public void ReconnectingContinuesInputSequenceNumbers()
+    {
+        var firstConnection = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
+        var secondConnection = CreateAdapterWithReports(ThirdReportSliderValue);
+        using var device = new TasollerPlusDevice(new ReconnectableDeviceAdapter(firstConnection, secondConnection));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        var lastFrameBeforeDisconnect = WaitForLatestSliderValue(device, SecondReportSliderValue);
+
+        device.Disconnect();
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        var firstFrameAfterReconnect = WaitForLatestInput(device);
+        Assert.AreEqual(ThirdReportSliderValue, firstFrameAfterReconnect.GetSliderValue(FirstSliderIndex));
+        Assert.AreEqual(ExpectedSequenceStep, firstFrameAfterReconnect.SequenceNumber - lastFrameBeforeDisconnect.SequenceNumber);
     }
 
     private static SingleDeviceAdapter CreateAdapterWithReports(byte firstSliderValue, params byte[] subsequentSliderValues)
@@ -154,20 +172,21 @@ public sealed class TasollerPlusDeviceTests
         return frame;
     }
 
-    private static void AssertLatestSliderValue(TasollerPlusDevice device, byte expectedSliderValue)
+    private static TasollerPlusInputFrame WaitForLatestSliderValue(TasollerPlusDevice device, byte expectedSliderValue)
     {
-        var actualSliderValue = default(byte?);
+        var latestFrame = default(TasollerPlusInputFrame?);
         SpinWait.SpinUntil(() =>
         {
             if (device.TryGetLatestInput(out var frame))
             {
-                actualSliderValue = frame.GetSliderValue(FirstSliderIndex);
+                latestFrame = frame;
             }
 
-            return actualSliderValue == expectedSliderValue;
+            return latestFrame?.GetSliderValue(FirstSliderIndex) == expectedSliderValue;
         }, InputAvailabilityTimeout);
 
-        Assert.AreEqual<byte?>(expectedSliderValue, actualSliderValue, "TryGetLatestInput() did not return the expected slider value before the timeout.");
+        Assert.AreEqual<byte?>(expectedSliderValue, latestFrame?.GetSliderValue(FirstSliderIndex), "TryGetLatestInput() did not return the expected slider value before the timeout.");
+        return latestFrame.GetValueOrDefault();
     }
 
     private static void AssertPendingSliderValues(TasollerPlusDevice device, int destinationLength, params byte[] expectedSliderValues)
@@ -178,6 +197,22 @@ public sealed class TasollerPlusDeviceTests
 
         var actualSliderValues = destination.Take(result.Count).Select(frame => frame.GetSliderValue(FirstSliderIndex)).ToArray();
         CollectionAssert.AreEqual(expectedSliderValues, actualSliderValues);
+    }
+
+    internal sealed class ReconnectableDeviceAdapter : ITasollerPlusTransport
+    {
+        private readonly Queue<ITasollerPlusConnection> _connections;
+
+        public ReconnectableDeviceAdapter(params ITasollerPlusConnection[] connections)
+        {
+            _connections = new Queue<ITasollerPlusConnection>(connections);
+        }
+
+        public TasollerPlusConnectResult Open(out ITasollerPlusConnection? connection)
+        {
+            connection = _connections.Dequeue();
+            return TasollerPlusConnectResult.Success;
+        }
     }
 
     internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlusConnection

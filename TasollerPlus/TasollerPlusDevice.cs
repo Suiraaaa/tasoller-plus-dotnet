@@ -11,6 +11,7 @@ namespace TasollerPlus
         private readonly int _inputBufferCapacity;
         private readonly Func<long> _getTimestamp;
         private TasollerPlusSession? _session;
+        private long _lastSequenceNumber;
 
         internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity, Func<long>? getTimestamp = null)
         {
@@ -37,7 +38,7 @@ namespace TasollerPlus
             var result = _transport.Open(out var connection);
             if (result == TasollerPlusConnectResult.Success && connection != null)
             {
-                _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp);
+                _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
             }
 
             return result;
@@ -47,7 +48,19 @@ namespace TasollerPlus
         {
             var session = _session;
             _session = null;
-            session?.Dispose();
+            if (session is null)
+            {
+                return;
+            }
+
+            try
+            {
+                session.Dispose();
+            }
+            finally
+            {
+                _lastSequenceNumber = session.LastSequenceNumber;
+            }
         }
 
         public bool TryGetLatestInput(out TasollerPlusInputFrame frame)
