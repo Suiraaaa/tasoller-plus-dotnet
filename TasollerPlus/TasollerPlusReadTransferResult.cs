@@ -3,9 +3,9 @@ namespace TasollerPlus
     internal readonly struct TasollerPlusReadTransferResult
     {
         private readonly int _bytesRead;
-        private readonly TasollerPlusReadTransferStatus _status;
+        private readonly TasollerPlusTransferStatus _status;
 
-        public TasollerPlusReadTransferResult(int bytesRead, TasollerPlusReadTransferStatus status = TasollerPlusReadTransferStatus.Succeeded)
+        public TasollerPlusReadTransferResult(int bytesRead, TasollerPlusTransferStatus status = TasollerPlusTransferStatus.Succeeded)
         {
             _bytesRead = bytesRead;
             _status = status;
@@ -13,6 +13,6 @@ namespace TasollerPlus
 
         public int BytesRead => _bytesRead;
 
-        public TasollerPlusReadTransferStatus Status => _status;
+        public TasollerPlusTransferStatus Status => _status;
     }
 }

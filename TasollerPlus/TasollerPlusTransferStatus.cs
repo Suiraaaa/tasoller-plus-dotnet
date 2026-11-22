@@ -1,6 +1,6 @@
 namespace TasollerPlus
 {
-    internal enum TasollerPlusReadTransferStatus
+    internal enum TasollerPlusTransferStatus
     {
         Succeeded,
         DeviceRemoved,

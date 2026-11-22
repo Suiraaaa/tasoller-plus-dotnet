@@ -155,10 +155,9 @@ namespace TasollerPlus
             while (!cancellationToken.IsCancellationRequested)
             {
                 var transfer = await connection.ReadInputAsync(buffer, cancellationToken).ConfigureAwait(false);
-                if (transfer.Status != TasollerPlusReadTransferStatus.Succeeded)
+                if (transfer.Status != TasollerPlusTransferStatus.Succeeded)
                 {
-                    var status = transfer.Status == TasollerPlusReadTransferStatus.DeviceRemoved ? TasollerPlusConnectionStatus.DeviceRemoved : TasollerPlusConnectionStatus.InputReceiveError;
-                    EndConnection(status);
+                    EndConnectionAfterTransferFailure(transfer.Status, TasollerPlusConnectionStatus.InputReceiveError);
                     return;
                 }
 
@@ -185,9 +184,10 @@ namespace TasollerPlus
                     return;
                 }
 
-                if (!await connection.WriteOutputAsync(report, cancellationToken).ConfigureAwait(false))
+                var transferStatus = await connection.WriteOutputAsync(report, cancellationToken).ConfigureAwait(false);
+                if (transferStatus != TasollerPlusTransferStatus.Succeeded)
                 {
-                    EndConnection(TasollerPlusConnectionStatus.LedSendError);
+                    EndConnectionAfterTransferFailure(transferStatus, TasollerPlusConnectionStatus.LedSendError);
                     return;
                 }
             }
@@ -201,6 +201,12 @@ namespace TasollerPlus
                 _pendingLedReport = null;
                 return report;
             }
+        }
+
+        private void EndConnectionAfterTransferFailure(TasollerPlusTransferStatus transferStatus, TasollerPlusConnectionStatus failureStatus)
+        {
+            var status = transferStatus == TasollerPlusTransferStatus.DeviceRemoved ? TasollerPlusConnectionStatus.DeviceRemoved : failureStatus;
+            EndConnection(status);
         }
 
         private void EndConnection(TasollerPlusConnectionStatus status)
