@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="TasollerPlus.Tests/TasollerPlus.Tests.csproj" Id="27a266cf-4c21-414a-80b2-73164cdbf35e" />
+  <Project Path="TasollerPlus/TasollerPlus.csproj" />
+</Solution>
