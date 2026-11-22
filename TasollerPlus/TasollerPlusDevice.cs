@@ -13,6 +13,7 @@ namespace TasollerPlus
         private TasollerPlusSession? _session;
         private long _lastSequenceNumber;
         private TasollerPlusConnectionStatus _disconnectedStatus;
+        private bool _isDisposed;
 
         internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity, Func<long>? getTimestamp = null)
         {
@@ -33,6 +34,11 @@ namespace TasollerPlus
 
         public TasollerPlusConnectResult Connect()
         {
+            if (_isDisposed)
+            {
+                throw new ObjectDisposedException(nameof(TasollerPlusDevice));
+            }
+
             if (Status == TasollerPlusConnectionStatus.Connected)
             {
                 return TasollerPlusConnectResult.AlreadyConnected;
@@ -104,6 +110,7 @@ namespace TasollerPlus
 
         public void Dispose()
         {
+            _isDisposed = true;
             Disconnect();
         }
     }

@@ -349,6 +349,32 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public void DisposeClosesTheConnectionAndPreventsReconnecting()
+    {
+        var firstConnection = CreateAdapterWithReports(FirstReportSliderValue);
+        var secondConnection = CreateAdapterWithReports(SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestInput(device);
+
+        device.Dispose();
+
+        Assert.IsTrue(firstConnection.IsClosed);
+        Assert.ThrowsExactly<ObjectDisposedException>(() => device.Connect());
+    }
+
+    [TestMethod]
+    public void DisposeBeforeConnectingPreventsOpeningAConnection()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+
+        device.Dispose();
+
+        Assert.ThrowsExactly<ObjectDisposedException>(() => device.Connect());
+    }
+
+    [TestMethod]
     public void DeviceRemovalClosesTheConnectionAndPreservesTheRemovalStatus()
     {
         var adapter = CreateAdapterWithReports(FirstReportSliderValue);
