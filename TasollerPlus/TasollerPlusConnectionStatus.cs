@@ -5,6 +5,7 @@ namespace TasollerPlus
         Disconnected,
         Connected,
         DeviceRemoved,
-        InputReceiveError
+        InputReceiveError,
+        LedSendError
     }
 }

@@ -7,13 +7,16 @@ namespace TasollerPlus
 {
     internal sealed class TasollerPlusSession : IDisposable
     {
-        private readonly CancellationTokenSource _receiveCancellation;
-        private readonly Task _receiveTask;
-        private readonly object _inputLock;
+        private const int MaxPendingLedReports = 1;
+
+        private readonly CancellationTokenSource _connectionCancellation;
+        private readonly Task _connectionTask;
+        private readonly object _stateLock;
+        private readonly SemaphoreSlim _ledReportReady;
         private readonly int _inputBufferCapacity;
         private readonly Func<long> _getTimestamp;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
-        private ITasollerPlusConnection? _connection;
+        private byte[]? _pendingLedReport;
         private TasollerPlusInputFrame? _latestInput;
         private long _droppedInputCount;
         private long _lastSequenceNumber;
@@ -21,25 +24,24 @@ namespace TasollerPlus
 
         public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber)
         {
-            _connection = connection;
             _inputBufferCapacity = inputBufferCapacity;
             _getTimestamp = getTimestamp;
             _lastSequenceNumber = lastSequenceNumber;
 
-            _receiveCancellation = new CancellationTokenSource();
-            _inputLock = new object();
+            _connectionCancellation = new CancellationTokenSource();
+            _stateLock = new object();
+            _ledReportReady = new SemaphoreSlim(initialCount: 0, maxCount: MaxPendingLedReports);
             _pendingInputs = new Queue<TasollerPlusInputFrame>(_inputBufferCapacity);
             _status = TasollerPlusConnectionStatus.Connected;
 
-            var cancellationToken = _receiveCancellation.Token;
-            _receiveTask = Task.Run(() => ReceiveInputsAsync(connection, cancellationToken), cancellationToken);
+            _connectionTask = RunConnectionAsync(connection, _connectionCancellation.Token);
         }
 
         public long LastSequenceNumber
         {
             get
             {
-                lock (_inputLock)
+                lock (_stateLock)
                 {
                     return _lastSequenceNumber;
                 }
@@ -50,7 +52,7 @@ namespace TasollerPlus
         {
             get
             {
-                lock (_inputLock)
+                lock (_stateLock)
                 {
                     return _status;
                 }
@@ -59,7 +61,7 @@ namespace TasollerPlus
 
         public bool TryGetLatestInput(out TasollerPlusInputFrame frame)
         {
-            lock (_inputLock)
+            lock (_stateLock)
             {
                 frame = _latestInput.GetValueOrDefault();
                 return _latestInput.HasValue;
@@ -68,7 +70,7 @@ namespace TasollerPlus
 
         public TasollerPlusInputReadResult ReadPendingInputs(TasollerPlusInputFrame[] destination)
         {
-            lock (_inputLock)
+            lock (_stateLock)
             {
                 var count = Math.Min(destination.Length, _pendingInputs.Count);
                 for (var index = 0; index < count; index++)
@@ -82,22 +84,68 @@ namespace TasollerPlus
             }
         }
 
+        public bool TrySetPendingLedReport(byte[] report)
+        {
+            lock (_stateLock)
+            {
+                if (_status != TasollerPlusConnectionStatus.Connected)
+                {
+                    return false;
+                }
+
+                var shouldWakeSender = _pendingLedReport is null;
+                _pendingLedReport = report;
+                if (shouldWakeSender)
+                {
+                    _ledReportReady.Release();
+                }
+
+                return true;
+            }
+        }
+
         public void Dispose()
         {
             try
             {
-                _receiveCancellation.Cancel();
-                _receiveTask.GetAwaiter().GetResult();
-            }
-            catch (OperationCanceledException) when (_receiveCancellation.IsCancellationRequested)
-            {
-                // A pending read is canceled when the session closes.
+                _connectionCancellation.Cancel();
+                _connectionTask.GetAwaiter().GetResult();
             }
             finally
             {
-                _receiveCancellation.Dispose();
-                CloseConnection();
+                _connectionCancellation.Dispose();
+                _ledReportReady.Dispose();
             }
+        }
+
+        private async Task RunConnectionAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
+        {
+            using (connection)
+            {
+                var receiveTask = RunTransferAsync(() => ReceiveInputsAsync(connection, cancellationToken), TasollerPlusConnectionStatus.InputReceiveError);
+                var sendTask = RunTransferAsync(() => SendLedReportsAsync(connection, cancellationToken), TasollerPlusConnectionStatus.LedSendError);
+                await Task.WhenAll(receiveTask, sendTask).ConfigureAwait(false);
+            }
+        }
+
+        private Task RunTransferAsync(Func<Task> transfer, TasollerPlusConnectionStatus errorStatus)
+        {
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    await transfer().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_connectionCancellation.IsCancellationRequested)
+                {
+                    // Closing the connection cancels pending I/O.
+                }
+                catch
+                {
+                    EndConnection(errorStatus);
+                    throw;
+                }
+            });
         }
 
         private async Task ReceiveInputsAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
@@ -126,27 +174,62 @@ namespace TasollerPlus
             }
         }
 
+        private async Task SendLedReportsAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await _ledReportReady.WaitAsync(cancellationToken).ConfigureAwait(false);
+                var report = TakePendingLedReport();
+                if (report is null)
+                {
+                    return;
+                }
+
+                if (!await connection.WriteOutputAsync(report, cancellationToken).ConfigureAwait(false))
+                {
+                    EndConnection(TasollerPlusConnectionStatus.LedSendError);
+                    return;
+                }
+            }
+        }
+
+        private byte[]? TakePendingLedReport()
+        {
+            lock (_stateLock)
+            {
+                var report = _pendingLedReport;
+                _pendingLedReport = null;
+                return report;
+            }
+        }
+
         private void EndConnection(TasollerPlusConnectionStatus status)
         {
-            lock (_inputLock)
+            lock (_stateLock)
             {
+                if (_status != TasollerPlusConnectionStatus.Connected)
+                {
+                    return;
+                }
+
                 _latestInput = null;
                 _pendingInputs.Clear();
+                _pendingLedReport = null;
                 _status = status;
             }
 
-            CloseConnection();
-        }
-
-        private void CloseConnection()
-        {
-            Interlocked.Exchange(ref _connection, null)?.Dispose();
+            _connectionCancellation.Cancel();
         }
 
         private void StoreInput(TasollerPlusInputFrame frame)
         {
-            lock (_inputLock)
+            lock (_stateLock)
             {
+                if (_status != TasollerPlusConnectionStatus.Connected)
+                {
+                    return;
+                }
+
                 if (_pendingInputs.Count == _inputBufferCapacity)
                 {
                     _pendingInputs.Dequeue();

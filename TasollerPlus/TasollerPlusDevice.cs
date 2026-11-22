@@ -97,6 +97,12 @@ namespace TasollerPlus
             return _session?.ReadPendingInputs(destination) ?? default;
         }
 
+        public bool TrySetLedColors(RgbColor[] slider, RgbColor[] leftAir, RgbColor[] rightAir)
+        {
+            var report = TasollerPlusLedReport.Encode(slider, leftAir, rightAir);
+            return _session?.TrySetPendingLedReport(report) ?? false;
+        }
+
         public void Dispose()
         {
             Disconnect();

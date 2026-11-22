@@ -20,7 +20,13 @@ public sealed class TasollerPlusDeviceTests
     private const byte SecondReportSliderValue = 0x3C;
     private const byte ThirdReportSliderValue = 0xE1;
     private const byte FourthReportSliderValue = 0x78;
+    private const int LedReportLength = 114;
+    private const int SliderLedColorCount = 31;
+    private const int AirTowerLedColorCount = 3;
+    private const string ExpectedLedReportPrefixHex = "444C02123456";
+    private static readonly RgbColor FirstSliderLedColor = new RgbColor(0x12, 0x34, 0x56);
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
     [TestMethod]
@@ -87,6 +93,27 @@ public sealed class TasollerPlusDeviceTests
 
         adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
         WaitForLatestSliderValue(device, SecondReportSliderValue);
+    }
+
+    [TestMethod]
+    public async Task TrySetLedColorsSendsTheRequestedColorsWhileWaitingForInput()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+        await adapter.WaitingForInput.WaitAsync(timeout.Token);
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var leftAir = new RgbColor[AirTowerLedColorCount];
+        var rightAir = new RgbColor[AirTowerLedColorCount];
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        var expectedReport = new byte[LedReportLength];
+        Convert.FromHexString(ExpectedLedReportPrefixHex).AsSpan().CopyTo(expectedReport);
+
+        Assert.IsTrue(device.TrySetLedColors(slider, leftAir, rightAir), "The connected device did not accept the LED colors.");
+        var actualReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
+        CollectionAssert.AreEqual(expectedReport, actualReport);
     }
 
     [TestMethod]
@@ -326,15 +353,21 @@ public sealed class TasollerPlusDeviceTests
     internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlusConnection
     {
         private readonly Channel<(byte[]? Report, TasollerPlusReadTransferResult Result)> _transfers;
+        private readonly Channel<byte[]> _writtenLedReports;
+        private readonly TaskCompletionSource _waitingForInput;
 
         public SingleDeviceAdapter(byte[] firstReport)
         {
             _transfers = Channel.CreateUnbounded<(byte[]? Report, TasollerPlusReadTransferResult Result)>();
+            _writtenLedReports = Channel.CreateUnbounded<byte[]>();
+            _waitingForInput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             EnqueueInputReport(firstReport);
         }
 
         public bool IsClosed => _transfers.Reader.Completion.IsCompleted;
+
+        public Task WaitingForInput => _waitingForInput.Task;
 
         public void EnqueueInputReport(byte[] report)
         {
@@ -359,7 +392,13 @@ public sealed class TasollerPlusDeviceTests
 
         public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            var transfer = await _transfers.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var pendingTransfer = _transfers.Reader.ReadAsync(cancellationToken);
+            if (!pendingTransfer.IsCompleted)
+            {
+                _waitingForInput.TrySetResult();
+            }
+
+            var transfer = await pendingTransfer.ConfigureAwait(false);
             if (transfer.Report is { } report)
             {
                 report.AsSpan().CopyTo(buffer.Span);
@@ -368,8 +407,20 @@ public sealed class TasollerPlusDeviceTests
             return transfer.Result;
         }
 
+        public ValueTask<bool> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(_writtenLedReports.Writer.TryWrite(report.ToArray()));
+        }
+
+        public ValueTask<byte[]> ReadWrittenLedReportAsync(CancellationToken cancellationToken)
+        {
+            return _writtenLedReports.Reader.ReadAsync(cancellationToken);
+        }
+
         public void Dispose()
         {
+            _writtenLedReports.Writer.TryComplete();
             _transfers.Writer.TryComplete();
         }
 
