@@ -10,9 +10,12 @@ public sealed class TasollerPlusDeviceTests
     private const int FirstSliderIndex = 0;
     private const int OverflowTestCapacity = 2;
     private const int OverflowTestReportCount = 3;
+    private const long ExpectedDroppedCount = 2;
+    private const long NoDroppedReports = 0;
     private const byte FirstReportSliderValue = 0xA6;
     private const byte SecondReportSliderValue = 0x3C;
     private const byte ThirdReportSliderValue = 0xE1;
+    private const byte FourthReportSliderValue = 0x78;
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
@@ -44,8 +47,7 @@ public sealed class TasollerPlusDeviceTests
     [TestMethod]
     public void ReadPendingInputsReturnsReportsInReceiveOrder()
     {
-        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue));
-        adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
@@ -58,15 +60,41 @@ public sealed class TasollerPlusDeviceTests
     [TestMethod]
     public void ReadPendingInputsDropsTheOldestReportWhenTheBufferOverflows()
     {
-        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue));
-        adapter.EnqueueInputReport(CreateInputReport(SecondReportSliderValue));
-        adapter.EnqueueInputReport(CreateInputReport(ThirdReportSliderValue));
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue, ThirdReportSliderValue);
         using var device = new TasollerPlusDevice(adapter, inputBufferCapacity: OverflowTestCapacity);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
 
         AssertLatestSliderValue(device, ThirdReportSliderValue);
 
         AssertPendingSliderValues(device, OverflowTestReportCount, SecondReportSliderValue, ThirdReportSliderValue);
+    }
+
+    [TestMethod]
+    public void ReadPendingInputsReportsDropsSinceThePreviousRead()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue, ThirdReportSliderValue, FourthReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter, inputBufferCapacity: OverflowTestCapacity);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        AssertLatestSliderValue(device, FourthReportSliderValue);
+
+        var destination = new TasollerPlusInputFrame[OverflowTestCapacity];
+        var firstRead = device.ReadPendingInputs(destination);
+        Assert.AreEqual(ExpectedDroppedCount, firstRead.DroppedCount);
+
+        var nextRead = device.ReadPendingInputs(destination);
+        Assert.AreEqual(NoDroppedReports, nextRead.DroppedCount);
+    }
+
+    private static SingleDeviceAdapter CreateAdapterWithReports(byte firstSliderValue, params byte[] subsequentSliderValues)
+    {
+        var adapter = new SingleDeviceAdapter(CreateInputReport(firstSliderValue));
+        foreach (var sliderValue in subsequentSliderValues)
+        {
+            adapter.EnqueueInputReport(CreateInputReport(sliderValue));
+        }
+
+        return adapter;
     }
 
     private static byte[] CreateInputReport(byte firstSliderValue)

@@ -14,6 +14,7 @@ namespace TasollerPlus
         private readonly int _inputBufferCapacity;
         private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
         private TasollerPlusInputFrame? _latestInput;
+        private long _droppedInputCount;
 
         public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity)
         {
@@ -47,7 +48,9 @@ namespace TasollerPlus
                     destination[index] = _pendingInputs.Dequeue();
                 }
 
-                return new TasollerPlusInputReadResult(count);
+                var result = new TasollerPlusInputReadResult(count, _droppedInputCount);
+                _droppedInputCount = default;
+                return result;
             }
         }
 
@@ -93,6 +96,7 @@ namespace TasollerPlus
                 if (_pendingInputs.Count == _inputBufferCapacity)
                 {
                     _pendingInputs.Dequeue();
+                    _droppedInputCount++;
                 }
 
                 _pendingInputs.Enqueue(frame);
