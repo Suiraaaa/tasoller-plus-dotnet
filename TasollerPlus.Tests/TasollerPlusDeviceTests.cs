@@ -42,6 +42,7 @@ public sealed class TasollerPlusDeviceTests
     private static readonly byte[] AirBeamReportBitsFromBottom = { 0b0010_0000, 0b0001_0000, 0b0000_1000, 0b0000_0100, 0b0000_0010, 0b0000_0001 };
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan LedReplayObservationTime = TimeSpan.FromMilliseconds(250);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
     [TestMethod]
@@ -174,15 +175,7 @@ public sealed class TasollerPlusDeviceTests
     {
         var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), async cancellationToken =>
-        {
-            if (firstWriteStarted.TrySetResult())
-            {
-                await finishFirstWrite.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            return TasollerPlusTransferStatus.Succeeded;
-        });
+        var adapter = CreateAdapterWithBlockedFirstLedWrite(firstWriteStarted, finishFirstWrite.Task);
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
         using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
@@ -411,6 +404,37 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public async Task ReconnectingAfterDeviceRemovalDoesNotReplayPendingLedColors()
+    {
+        var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstConnection = CreateAdapterWithBlockedFirstLedWrite(firstWriteStarted, Task.Delay(Timeout.InfiniteTimeSpan));
+        var secondConnection = CreateAdapterWithReports(SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, FirstReportSliderValue);
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        await firstWriteStarted.Task.WaitAsync(timeout.Token);
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        firstConnection.RemoveDevice();
+        AssertConnectionEnded(device, firstConnection, TasollerPlusConnectionStatus.DeviceRemoved);
+
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
+        var firstReportAfterReconnect = secondConnection.ReadWrittenLedReportAsync(timeout.Token).AsTask();
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => firstReportAfterReconnect.WaitAsync(LedReplayObservationTime), "A pending LED report was sent before a new color was requested.");
+
+        slider[FirstSliderIndex] = LatestSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        var actualReport = await firstReportAfterReconnect;
+        CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedLatestLedReportPrefixHex), actualReport);
+    }
+
+    [TestMethod]
     public void InputReceiveFailureClosesTheConnectionAndPreservesTheErrorStatus()
     {
         var adapter = CreateAdapterWithReports(FirstReportSliderValue);
@@ -493,6 +517,19 @@ public sealed class TasollerPlusDeviceTests
         }
 
         return adapter;
+    }
+
+    private static SingleDeviceAdapter CreateAdapterWithBlockedFirstLedWrite(TaskCompletionSource firstWriteStarted, Task finishFirstWrite)
+    {
+        return new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), async cancellationToken =>
+        {
+            if (firstWriteStarted.TrySetResult())
+            {
+                await finishFirstWrite.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return TasollerPlusTransferStatus.Succeeded;
+        });
     }
 
     private static byte[] CreateInputReport(byte firstSliderValue)
