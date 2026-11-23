@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 
 namespace TasollerPlus
 {
@@ -8,14 +7,14 @@ namespace TasollerPlus
         private const string TasollerPlusUsbDeviceId = @"USB\VID_0E8F&PID_1231";
         private const string SingleInterfaceDevicePrefix = TasollerPlusUsbDeviceId + @"\";
         private const string CompositeInterfaceZeroPrefix = TasollerPlusUsbDeviceId + @"&MI_00\";
-        private const int NoMatchingDeviceCount = 0;
-        private const int SingleMatchingDeviceCount = 1;
 
         private readonly Func<string[]?> _readPresentDeviceInstanceIds;
+        private readonly Func<string, ITasollerPlusConnection?> _openConnection;
 
-        public TasollerPlusWinUsbTransport(Func<string[]?> readPresentDeviceInstanceIds)
+        public TasollerPlusWinUsbTransport(Func<string[]?> readPresentDeviceInstanceIds, Func<string, ITasollerPlusConnection?>? openConnection = null)
         {
             _readPresentDeviceInstanceIds = readPresentDeviceInstanceIds;
+            _openConnection = openConnection ?? TasollerPlusWinUsbConnection.Open;
         }
 
         public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
@@ -27,13 +26,29 @@ namespace TasollerPlus
                 return TasollerPlusTransportOpenResult.Failed;
             }
 
-            var matchingCount = instanceIds.Count(IsTasollerPlusDeviceInstance);
-            return matchingCount switch
+            var matchingInstanceId = default(string);
+            foreach (var instanceId in instanceIds)
             {
-                NoMatchingDeviceCount => TasollerPlusTransportOpenResult.DeviceNotFound,
-                SingleMatchingDeviceCount => TasollerPlusTransportOpenResult.Failed,
-                _ => TasollerPlusTransportOpenResult.MultipleDevicesFound
-            };
+                if (!IsTasollerPlusDeviceInstance(instanceId))
+                {
+                    continue;
+                }
+
+                if (matchingInstanceId != null)
+                {
+                    return TasollerPlusTransportOpenResult.MultipleDevicesFound;
+                }
+
+                matchingInstanceId = instanceId;
+            }
+
+            if (matchingInstanceId is null)
+            {
+                return TasollerPlusTransportOpenResult.DeviceNotFound;
+            }
+
+            connection = _openConnection(matchingInstanceId);
+            return connection is null ? TasollerPlusTransportOpenResult.Failed : TasollerPlusTransportOpenResult.Opened;
         }
 
         private static bool IsTasollerPlusDeviceInstance(string instanceId)

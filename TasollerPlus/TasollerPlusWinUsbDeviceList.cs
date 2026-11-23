@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace TasollerPlus
@@ -11,8 +12,11 @@ namespace TasollerPlus
         private const uint FilterPresent = 0x00000100;
         private const uint DoNotGenerateDeviceNode = 0x10000040;
         private const uint DeviceListFlags = FilterService | FilterPresent | DoNotGenerateDeviceNode;
+        private const uint EnumerateInterfaceClasses = 0x00000001;
+        private const uint PresentDeviceInterfaces = 0x00000000;
         private const uint ConfigurationSuccess = 0x00000000;
         private const uint ConfigurationBufferTooSmall = 0x0000001A;
+        private const uint ConfigurationInvalidData = 0x0000001F;
         private const int MaxEnumerationAttempts = 3;
 
         public static string[]? ReadPresentDeviceInstanceIds()
@@ -47,10 +51,72 @@ namespace TasollerPlus
             return null;
         }
 
+        public static IEnumerable<string> ReadPresentInterfacePaths(string instanceId)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || string.IsNullOrEmpty(instanceId))
+            {
+                yield break;
+            }
+
+            for (var classIndex = 0u; ; classIndex++)
+            {
+                var result = EnumerateDeviceClasses(classIndex, out var interfaceClass, EnumerateInterfaceClasses);
+                if (result == ConfigurationInvalidData)
+                {
+                    continue;
+                }
+
+                if (result != ConfigurationSuccess)
+                {
+                    yield break;
+                }
+
+                foreach (var path in ReadPresentInterfacePathsForClass(instanceId, interfaceClass))
+                {
+                    yield return path;
+                }
+            }
+        }
+
+        private static string[] ReadPresentInterfacePathsForClass(string instanceId, Guid interfaceClass)
+        {
+            for (var attempt = 0; attempt < MaxEnumerationAttempts; attempt++)
+            {
+                var sizeResult = GetDeviceInterfaceListSize(out var characterCount, ref interfaceClass, instanceId, PresentDeviceInterfaces);
+                if (sizeResult != ConfigurationSuccess)
+                {
+                    break;
+                }
+
+                var buffer = new char[characterCount];
+                var listResult = GetDeviceInterfaceList(ref interfaceClass, instanceId, buffer, characterCount, PresentDeviceInterfaces);
+                if (listResult == ConfigurationSuccess)
+                {
+                    return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                }
+
+                if (listResult != ConfigurationBufferTooSmall)
+                {
+                    break;
+                }
+            }
+
+            return Array.Empty<string>();
+        }
+
         [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_ID_List_SizeW", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern uint GetDeviceIdListSize(out uint characterCount, string filter, uint flags);
 
         [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_ID_ListW", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern uint GetDeviceIdList(string filter, [Out] char[] buffer, uint characterCount, uint flags);
+
+        [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Enumerate_Classes", ExactSpelling = true)]
+        private static extern uint EnumerateDeviceClasses(uint classIndex, out Guid interfaceClass, uint flags);
+
+        [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_Interface_List_SizeW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint GetDeviceInterfaceListSize(out uint characterCount, ref Guid interfaceClass, string instanceId, uint flags);
+
+        [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_Interface_ListW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint GetDeviceInterfaceList(ref Guid interfaceClass, string instanceId, [Out] char[] buffer, uint characterCount, uint flags);
     }
 }
