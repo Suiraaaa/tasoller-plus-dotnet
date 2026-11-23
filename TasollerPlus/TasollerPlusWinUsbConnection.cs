@@ -20,8 +20,6 @@ namespace TasollerPlus
         private const uint FileAttributeNormal = 0x00000080;
         private const int ErrorIoPending = 997;
         private const int ErrorDeviceNotConnected = 1167;
-        private const byte InputPipeId = 0x84;
-        private const byte LedOutputPipeId = 0x03;
 
         private readonly SafeFileHandle _fileHandle;
         private readonly TasollerPlusWinUsbInterfaceHandle _interfaceHandle;
@@ -49,14 +47,14 @@ namespace TasollerPlus
         public ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
             using var pinnedBuffer = buffer.Pin();
-            var transfer = Transfer(pinnedBuffer, buffer.Length, InputPipeId, cancellationToken);
+            var transfer = Transfer(pinnedBuffer, buffer.Length, TasollerPlusWinUsbPipeLayout.InputPipeId, cancellationToken);
             return new ValueTask<TasollerPlusReadTransferResult>(new TasollerPlusReadTransferResult(transfer.ByteCount, transfer.Status));
         }
 
         public ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
         {
             using var pinnedBuffer = report.Pin();
-            var transfer = Transfer(pinnedBuffer, report.Length, LedOutputPipeId, cancellationToken);
+            var transfer = Transfer(pinnedBuffer, report.Length, TasollerPlusWinUsbPipeLayout.LedOutputPipeId, cancellationToken);
             var status = transfer.Status == TasollerPlusTransferStatus.Succeeded && transfer.ByteCount != report.Length ? TasollerPlusTransferStatus.Failed : transfer.Status;
             return new ValueTask<TasollerPlusTransferStatus>(status);
         }
@@ -75,6 +73,11 @@ namespace TasollerPlus
             try
             {
                 if (fileHandle.IsInvalid || !WinUsb_Initialize(fileHandle, out interfaceHandle) || interfaceHandle.IsInvalid)
+                {
+                    return null;
+                }
+
+                if (!TasollerPlusWinUsbPipeLayout.IsSupported(interfaceHandle))
                 {
                     return null;
                 }
@@ -99,7 +102,7 @@ namespace TasollerPlus
             using var completed = new EventWaitHandle(initialState: false, EventResetMode.ManualReset);
             var overlapped = new NativeOverlapped { EventHandle = completed.SafeWaitHandle.DangerousGetHandle() };
             var byteCount = 0u;
-            var succeeded = pipeId == InputPipeId
+            var succeeded = pipeId == TasollerPlusWinUsbPipeLayout.InputPipeId
                 ? WinUsb_ReadPipe(_interfaceHandle, pipeId, pinnedBuffer.Pointer, (uint)length, &byteCount, &overlapped)
                 : WinUsb_WritePipe(_interfaceHandle, pipeId, pinnedBuffer.Pointer, (uint)length, &byteCount, &overlapped);
 
