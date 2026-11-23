@@ -55,6 +55,15 @@ public sealed class TasollerPlusWinUsbTransportTests
     }
 
     [TestMethod]
+    public void DetectDeviceRejectsADisposedInstanceBeforeEnumeratingDevices()
+    {
+        using var device = CreateEnumerationOnlyDevice(() => throw new AssertFailedException("Device enumeration should not run after disposal."));
+        device.Dispose();
+
+        Assert.ThrowsExactly<ObjectDisposedException>(() => device.DetectDevice());
+    }
+
+    [TestMethod]
     public void DetectDevicePreservesAnExistingConnection()
     {
         var report = new byte[InputReportLength];

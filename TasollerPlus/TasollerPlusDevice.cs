@@ -42,14 +42,16 @@ namespace TasollerPlus
 
         /// <summary>Checks for Tasoller Plus devices in WinUSB mode without opening a connection.</summary>
         /// <remarks>The result reflects the device list at the time of the call. <see cref="Connect"/> checks the list again when opening a connection.</remarks>
-        public TasollerPlusDeviceDetectionResult DetectDevice() => _transport.DetectDevice();
+        /// <exception cref="ObjectDisposedException">This instance has been disposed.</exception>
+        public TasollerPlusDeviceDetectionResult DetectDevice()
+        {
+            ThrowIfDisposed();
+            return _transport.DetectDevice();
+        }
 
         public TasollerPlusConnectResult Connect()
         {
-            if (_isDisposed)
-            {
-                throw new ObjectDisposedException(nameof(TasollerPlusDevice));
-            }
+            ThrowIfDisposed();
 
             if (Status == TasollerPlusConnectionStatus.Connected)
             {
@@ -119,6 +121,14 @@ namespace TasollerPlus
         {
             _isDisposed = true;
             Disconnect();
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_isDisposed)
+            {
+                throw new ObjectDisposedException(nameof(TasollerPlusDevice));
+            }
         }
     }
 }
