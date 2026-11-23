@@ -393,6 +393,24 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    public void DeviceRemovalClearsTheUnreadBufferAndItsDroppedCount()
+    {
+        var firstConnection = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue, ThirdReportSliderValue);
+        var secondConnection = CreateAdapterWithReports(FourthReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection), inputBufferCapacity: OverflowTestCapacity);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, ThirdReportSliderValue);
+
+        firstConnection.RemoveDevice();
+
+        AssertConnectionEnded(device, firstConnection, TasollerPlusConnectionStatus.DeviceRemoved);
+
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, FourthReportSliderValue);
+        AssertPendingSliderValues(device, device.InputBufferCapacity, FourthReportSliderValue);
+    }
+
+    [TestMethod]
     public void InputReceiveFailureClosesTheConnectionAndPreservesTheErrorStatus()
     {
         var adapter = CreateAdapterWithReports(FirstReportSliderValue);
@@ -442,7 +460,9 @@ public sealed class TasollerPlusDeviceTests
         Assert.IsFalse(device.TryGetLatestInput(out _));
 
         var destination = new TasollerPlusInputFrame[device.InputBufferCapacity];
-        Assert.AreEqual(NoPendingReportCount, device.ReadPendingInputs(destination).Count);
+        var result = device.ReadPendingInputs(destination);
+        Assert.AreEqual(NoPendingReportCount, result.Count);
+        Assert.AreEqual(NoDroppedReports, result.DroppedCount);
         Assert.IsTrue(SpinWait.SpinUntil(() => adapter.IsClosed, InputAvailabilityTimeout), "The connection remained open after reporting an end status.");
     }
 

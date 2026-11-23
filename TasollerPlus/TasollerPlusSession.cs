@@ -218,6 +218,7 @@ namespace TasollerPlus
 
                 _latestInput = null;
                 _pendingInputs.Clear();
+                _droppedInputCount = default;
                 _pendingLedReport = null;
                 _status = status;
             }
