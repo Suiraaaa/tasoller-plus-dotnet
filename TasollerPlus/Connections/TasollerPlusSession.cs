@@ -17,13 +17,14 @@ namespace TasollerPlus.Connections
         private readonly Task _connectionTask;
         private readonly object _stateLock;
         private readonly SemaphoreSlim _pendingLedReportSignal;
+        private readonly Func<SemaphoreSlim, TimeSpan, CancellationToken, Task<bool>> _waitForLedReportSignal;
         private readonly Func<long> _getTimestamp;
         private readonly TasollerPlusInputBuffer _inputBuffer;
         private byte[]? _pendingLedReport;
         private long _lastSequenceNumber;
         private TasollerPlusConnectionStatus _status;
 
-        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber)
+        public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber, Func<SemaphoreSlim, TimeSpan, CancellationToken, Task<bool>>? waitForLedReportSignal = null)
         {
             _getTimestamp = getTimestamp;
             _lastSequenceNumber = lastSequenceNumber;
@@ -31,6 +32,7 @@ namespace TasollerPlus.Connections
             _connectionCancellation = new CancellationTokenSource();
             _stateLock = new object();
             _pendingLedReportSignal = new SemaphoreSlim(initialCount: 0, maxCount: LedReportSignalCapacity);
+            _waitForLedReportSignal = waitForLedReportSignal ?? ((signal, timeout, cancellationToken) => signal.WaitAsync(timeout, cancellationToken));
             _inputBuffer = new TasollerPlusInputBuffer(inputBufferCapacity);
             _status = TasollerPlusConnectionStatus.Connected;
 
@@ -171,29 +173,9 @@ namespace TasollerPlus.Connections
         private async Task SendLedReportsAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
         {
             var lastSentReport = default(byte[]?);
-            while (!cancellationToken.IsCancellationRequested)
+            while (true)
             {
-                var timeout = lastSentReport is null ? Timeout.InfiniteTimeSpan : DefaultLedResendInterval;
-                var pendingReportSignaled = await _pendingLedReportSignal.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
-
-                byte[]? report;
-                lock (_stateLock)
-                {
-                    if (_status != TasollerPlusConnectionStatus.Connected)
-                    {
-                        return;
-                    }
-
-                    // A report queued as the wait timed out still has a signal to consume.
-                    if (!pendingReportSignaled && _pendingLedReport != null)
-                    {
-                        continue;
-                    }
-
-                    report = _pendingLedReport ?? lastSentReport;
-                    _pendingLedReport = null;
-                }
-
+                var report = await WaitForNextLedReportAsync(lastSentReport, cancellationToken).ConfigureAwait(false);
                 if (report is null)
                 {
                     return;
@@ -208,6 +190,34 @@ namespace TasollerPlus.Connections
 
                 lastSentReport = report;
             }
+        }
+
+        private async ValueTask<byte[]?> WaitForNextLedReportAsync(byte[]? lastSentReport, CancellationToken cancellationToken)
+        {
+            var timeout = lastSentReport is null ? Timeout.InfiniteTimeSpan : DefaultLedResendInterval;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var pendingReportSignaled = await _waitForLedReportSignal(_pendingLedReportSignal, timeout, cancellationToken).ConfigureAwait(false);
+                lock (_stateLock)
+                {
+                    if (_status != TasollerPlusConnectionStatus.Connected)
+                    {
+                        return null;
+                    }
+
+                    // A report queued as the wait timed out still has a signal to consume.
+                    if (!pendingReportSignaled && _pendingLedReport != null)
+                    {
+                        continue;
+                    }
+
+                    var report = _pendingLedReport ?? lastSentReport;
+                    _pendingLedReport = null;
+                    return report;
+                }
+            }
+
+            return null;
         }
 
         private void EndConnectionAfterTransferFailure(TasollerPlusTransferStatus transferStatus, TasollerPlusConnectionStatus failureStatus)
