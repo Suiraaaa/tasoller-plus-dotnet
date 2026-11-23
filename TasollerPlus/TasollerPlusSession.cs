@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -140,9 +141,15 @@ namespace TasollerPlus
                 {
                     // Closing the connection cancels pending I/O.
                 }
-                catch
+                catch (Exception exception)
                 {
                     EndConnection(errorStatus);
+
+                    if (exception is IOException)
+                    {
+                        return;
+                    }
+
                     throw;
                 }
             });

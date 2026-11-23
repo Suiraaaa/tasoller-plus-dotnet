@@ -446,6 +446,24 @@ public sealed class TasollerPlusDeviceTests
         Assert.AreEqual(expectedStatus, device.Status);
     }
 
+    [TestMethod]
+    public void ReconnectingSucceedsAfterLedSendThrowsAnIoException()
+    {
+        var firstConnection = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), _ => throw new IOException("The simulated LED write failed."));
+        var secondConnection = CreateAdapterWithReports(SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, FirstReportSliderValue);
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        AssertConnectionEnded(device, firstConnection, TasollerPlusConnectionStatus.LedSendError);
+
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        WaitForLatestSliderValue(device, SecondReportSliderValue);
+    }
+
     private static void AssertUnsuccessfulConnect(ITasollerPlusTransport transport, TasollerPlusConnectResult expectedResult)
     {
         using var device = new TasollerPlusDevice(transport);
