@@ -3,21 +3,12 @@ using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 
 namespace TasollerPlus.Connections.WinUsb
 {
     internal sealed class TasollerPlusWinUsbConnection : ITasollerPlusConnection
     {
-        private const string WinUsbLibrary = "Winusb.dll";
-        private const string KernelLibrary = "Kernel32.dll";
-        private const uint GenericRead = 0x80000000;
-        private const uint GenericWrite = 0x40000000;
-        private const uint ShareRead = 0x00000001;
-        private const uint ShareWrite = 0x00000002;
-        private const uint OpenExisting = 3;
-        private const uint FileFlagOverlapped = 0x40000000;
-        private const uint FileAttributeNormal = 0x00000080;
+        private const int ErrorSuccess = 0;
         private const int ErrorDevNotExist = 55;
         private const int ErrorNoSuchDevice = 433;
         private const int ErrorIoPending = 997;
@@ -25,24 +16,22 @@ namespace TasollerPlus.Connections.WinUsb
         private const int ErrorDeviceRemoved = 1617;
 
         private readonly string _instanceId;
-        private readonly SafeFileHandle _fileHandle;
-        private readonly TasollerPlusWinUsbInterfaceHandle _interfaceHandle;
+        private readonly ITasollerPlusWinUsbPipeOperations _pipes;
 
-        private TasollerPlusWinUsbConnection(string instanceId, SafeFileHandle fileHandle, TasollerPlusWinUsbInterfaceHandle interfaceHandle)
+        public TasollerPlusWinUsbConnection(string instanceId, ITasollerPlusWinUsbPipeOperations pipes)
         {
             _instanceId = instanceId;
-            _fileHandle = fileHandle;
-            _interfaceHandle = interfaceHandle;
+            _pipes = pipes;
         }
 
         public static TasollerPlusWinUsbConnection? Open(string instanceId)
         {
             foreach (var path in TasollerPlusWinUsbDeviceList.ReadPresentInterfacePaths(instanceId))
             {
-                var connection = OpenPath(path, instanceId);
-                if (connection != null)
+                var pipes = TasollerPlusWinUsbPipeOperations.Open(path);
+                if (pipes != null)
                 {
-                    return connection;
+                    return new TasollerPlusWinUsbConnection(instanceId, pipes);
                 }
             }
 
@@ -56,112 +45,70 @@ namespace TasollerPlus.Connections.WinUsb
             return deviceAbsent ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
         }
 
-        public ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+        public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            using var pinnedBuffer = buffer.Pin();
-            var transfer = Transfer(pinnedBuffer, buffer.Length, TasollerPlusWinUsbPipeLayout.InputPipeId, cancellationToken);
-            return new ValueTask<TasollerPlusReadTransferResult>(new TasollerPlusReadTransferResult(transfer.ByteCount, transfer.Status));
+            var transfer = await TransferAsync(buffer, TasollerPlusWinUsbPipeLayout.InputPipeId, cancellationToken).ConfigureAwait(false);
+            return new TasollerPlusReadTransferResult(transfer.ByteCount, transfer.Status);
         }
 
-        public ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
+        public async ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
         {
-            using var pinnedBuffer = report.Pin();
-            var transfer = Transfer(pinnedBuffer, report.Length, TasollerPlusWinUsbPipeLayout.LedOutputPipeId, cancellationToken);
-            var status = transfer.Status == TasollerPlusTransferStatus.Succeeded && transfer.ByteCount != report.Length ? TasollerPlusTransferStatus.Failed : transfer.Status;
-            return new ValueTask<TasollerPlusTransferStatus>(status);
+            var transfer = await TransferAsync(report, TasollerPlusWinUsbPipeLayout.LedOutputPipeId, cancellationToken).ConfigureAwait(false);
+            return transfer.Status == TasollerPlusTransferStatus.Succeeded && transfer.ByteCount != report.Length ? TasollerPlusTransferStatus.Failed : transfer.Status;
         }
 
         public void Dispose()
         {
-            _interfaceHandle.Dispose();
-            _fileHandle.Dispose();
+            _pipes.Dispose();
         }
 
-        private static TasollerPlusWinUsbConnection? OpenPath(string path, string instanceId)
-        {
-            var fileHandle = CreateFile(path, GenericRead | GenericWrite, ShareRead | ShareWrite, IntPtr.Zero, OpenExisting, FileFlagOverlapped | FileAttributeNormal, IntPtr.Zero);
-            TasollerPlusWinUsbInterfaceHandle? interfaceHandle = null;
-            var ownershipTransferred = false;
-            try
-            {
-                if (fileHandle.IsInvalid || !WinUsb_Initialize(fileHandle, out interfaceHandle) || interfaceHandle.IsInvalid)
-                {
-                    return null;
-                }
-
-                if (!TasollerPlusWinUsbPipeLayout.IsSupported(interfaceHandle))
-                {
-                    return null;
-                }
-
-                var connection = new TasollerPlusWinUsbConnection(instanceId, fileHandle, interfaceHandle);
-                ownershipTransferred = true;
-                return connection;
-            }
-            finally
-            {
-                if (!ownershipTransferred)
-                {
-                    interfaceHandle?.Dispose();
-                    fileHandle.Dispose();
-                }
-            }
-        }
-
-        private unsafe (TasollerPlusTransferStatus Status, int ByteCount) Transfer(MemoryHandle pinnedBuffer, int length, byte pipeId, CancellationToken cancellationToken)
+        private async ValueTask<(TasollerPlusTransferStatus Status, int ByteCount)> TransferAsync(ReadOnlyMemory<byte> buffer, byte pipeId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var completed = new EventWaitHandle(initialState: false, EventResetMode.ManualReset);
-            var overlapped = new NativeOverlapped { EventHandle = completed.SafeWaitHandle.DangerousGetHandle() };
-            var byteCount = 0u;
-            var succeeded = pipeId == TasollerPlusWinUsbPipeLayout.InputPipeId
-                ? WinUsb_ReadPipe(_interfaceHandle, pipeId, pinnedBuffer.Pointer, (uint)length, &byteCount, &overlapped)
-                : WinUsb_WritePipe(_interfaceHandle, pipeId, pinnedBuffer.Pointer, (uint)length, &byteCount, &overlapped);
-
-            if (!succeeded)
+            using var pinnedBuffer = buffer.Pin();
+            using var completion = new TasollerPlusWinUsbCompletion();
+            var requestAddress = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlapped>());
+            try
             {
-                var error = Marshal.GetLastWin32Error();
-                if (error == ErrorIoPending)
+                var overlapped = new NativeOverlapped { EventHandle = completion.EventHandle };
+                Marshal.StructureToPtr(overlapped, requestAddress, fDeleteOld: false);
+                using var registration = cancellationToken.Register(() => _pipes.CancelTransfer(requestAddress));
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var submissionError = _pipes.StartTransfer(pipeId, GetBufferAddress(pinnedBuffer), (uint)buffer.Length, requestAddress);
+                if (submissionError == ErrorIoPending)
                 {
-                    var requestAddress = (IntPtr)(&overlapped);
-                    using var registration = cancellationToken.Register(() => CancelIoEx(_fileHandle, requestAddress));
-                    // Even after cancellation, the request owns the pinned buffer and event until completion.
-                    succeeded = WinUsb_GetOverlappedResult(_interfaceHandle, &overlapped, &byteCount, wait: true);
-                    error = Marshal.GetLastWin32Error();
+                    // A cancellation callback may have run before WinUSB received the request.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        _pipes.CancelTransfer(requestAddress);
+                    }
+
+                    // CancelIoEx only requests cancellation. Keep the native memory alive until completion.
+                    await completion.Completed.ConfigureAwait(false);
                 }
 
-                if (!succeeded)
+                var (error, byteCount) = submissionError == ErrorSuccess || submissionError == ErrorIoPending
+                    ? _pipes.GetTransferResult(requestAddress)
+                    : (submissionError, default(uint));
+                if (error != ErrorSuccess)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var status = ClassifyTransferFailure(error, _instanceId, TasollerPlusWinUsbDeviceList.IsDeviceAbsent);
-                    return (status, 0);
+                    return (status, default);
                 }
-            }
 
-            return byteCount <= (uint)length ? (TasollerPlusTransferStatus.Succeeded, (int)byteCount) : (TasollerPlusTransferStatus.Failed, 0);
+                return byteCount <= (uint)buffer.Length ? (TasollerPlusTransferStatus.Succeeded, (int)byteCount) : (TasollerPlusTransferStatus.Failed, default);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(requestAddress);
+            }
         }
 
-        [DllImport(KernelLibrary, EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-        private static extern SafeFileHandle CreateFile(string path, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flags, IntPtr templateFile);
-
-        [DllImport(WinUsbLibrary, ExactSpelling = true, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool WinUsb_Initialize(SafeFileHandle fileHandle, out TasollerPlusWinUsbInterfaceHandle interfaceHandle);
-
-        [DllImport(WinUsbLibrary, ExactSpelling = true, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern unsafe bool WinUsb_ReadPipe(TasollerPlusWinUsbInterfaceHandle interfaceHandle, byte pipeId, void* buffer, uint bufferLength, uint* bytesTransferred, NativeOverlapped* overlapped);
-
-        [DllImport(WinUsbLibrary, ExactSpelling = true, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern unsafe bool WinUsb_WritePipe(TasollerPlusWinUsbInterfaceHandle interfaceHandle, byte pipeId, void* buffer, uint bufferLength, uint* bytesTransferred, NativeOverlapped* overlapped);
-
-        [DllImport(WinUsbLibrary, ExactSpelling = true, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern unsafe bool WinUsb_GetOverlappedResult(TasollerPlusWinUsbInterfaceHandle interfaceHandle, NativeOverlapped* overlapped, uint* bytesTransferred, [MarshalAs(UnmanagedType.Bool)] bool wait);
-
-        [DllImport(KernelLibrary, ExactSpelling = true, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool CancelIoEx(SafeFileHandle fileHandle, IntPtr overlapped);
+        private static unsafe IntPtr GetBufferAddress(MemoryHandle buffer)
+        {
+            return (IntPtr)buffer.Pointer;
+        }
     }
 }
