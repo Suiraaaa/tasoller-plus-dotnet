@@ -7,6 +7,7 @@ namespace TasollerPlus.Tests.Connections.WinUsb;
 public sealed class TasollerPlusWinUsbTransportTests
 {
     private const string MatchingInstanceId = @"usb\vid_0e8f&pid_1231&mi_00\TARGET";
+    private const string SecondMatchingInstanceId = @"USB\VID_0E8F&PID_1231\SECOND-DEVICE";
     private const string NonMatchingInstanceId = @"USB\VID_0E8F&PID_1231&MI_01\OTHER-INTERFACE";
     private const int InputReportLength = 36;
     private const int FirstSliderOffset = 4;
@@ -14,6 +15,73 @@ public sealed class TasollerPlusWinUsbTransportTests
     private const byte ExpectedSliderValue = 0xA6;
     private const int ExpectedOpenAttempts = 1;
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
+
+    [TestMethod]
+    public void DetectDeviceFindsTheOnlyMatchingWinUsbDeviceWithoutOpeningAConnection()
+    {
+        using var device = CreateEnumerationOnlyDevice(() => new[] { NonMatchingInstanceId, MatchingInstanceId });
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DeviceFound, device.DetectDevice());
+        Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);
+    }
+
+    [TestMethod]
+    public void DetectDeviceIgnoresNonMatchingWinUsbDevices()
+    {
+        using var device = CreateEnumerationOnlyDevice(() => new[] { NonMatchingInstanceId });
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DeviceNotFound, device.DetectDevice());
+    }
+
+    [TestMethod]
+    public void DetectDeviceReportsMultipleMatchingWinUsbDevices()
+    {
+        using var device = CreateEnumerationOnlyDevice(() => new[] { MatchingInstanceId, SecondMatchingInstanceId });
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.MultipleDevicesFound, device.DetectDevice());
+    }
+
+    [TestMethod]
+    public void DetectDeviceDistinguishesAnEmptyDeviceListFromEnumerationFailure()
+    {
+        var enumerationFails = false;
+        using var device = CreateEnumerationOnlyDevice(() => enumerationFails ? null : Array.Empty<string>());
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DeviceNotFound, device.DetectDevice());
+
+        enumerationFails = true;
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DetectionFailed, device.DetectDevice());
+    }
+
+    [TestMethod]
+    public void DetectDevicePreservesAnExistingConnection()
+    {
+        var report = new byte[InputReportLength];
+        "DBT"u8.CopyTo(report);
+        var connection = new SingleDeviceAdapter(report);
+        var instanceIds = new[] { MatchingInstanceId };
+        var transport = new TasollerPlusWinUsbTransport(() => instanceIds, _ => connection);
+        using var device = new TasollerPlusDevice(transport);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        instanceIds = Array.Empty<string>();
+
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DeviceNotFound, device.DetectDevice());
+        Assert.AreEqual(TasollerPlusConnectionStatus.Connected, device.Status);
+    }
+
+    [TestMethod]
+    public void ConnectChecksTheCurrentDeviceListAfterDetection()
+    {
+        var instanceIds = new[] { MatchingInstanceId };
+        using var device = CreateEnumerationOnlyDevice(() => instanceIds);
+        Assert.AreEqual(TasollerPlusDeviceDetectionResult.DeviceFound, device.DetectDevice());
+
+        instanceIds = Array.Empty<string>();
+
+        Assert.AreEqual(TasollerPlusConnectResult.DeviceNotFound, device.Connect());
+    }
 
     [TestMethod]
     public void ConnectReportsDeviceNotFoundWhenNoWinUsbDeviceMatches()
@@ -31,11 +99,7 @@ public sealed class TasollerPlusWinUsbTransportTests
     [TestMethod]
     public void ConnectReportsMultipleDevicesForTwoMatchingWinUsbDeviceInstances()
     {
-        var instanceIds = new[]
-        {
-            @"usb\vid_0e8f&pid_1231&mi_00\FIRST-DEVICE",
-            @"USB\VID_0E8F&PID_1231\SECOND-DEVICE"
-        };
+        var instanceIds = new[] { MatchingInstanceId, SecondMatchingInstanceId };
 
         AssertConnectResult(instanceIds, TasollerPlusConnectResult.MultipleDevicesFound);
     }
@@ -86,10 +150,15 @@ public sealed class TasollerPlusWinUsbTransportTests
         Assert.AreEqual(ExpectedOpenAttempts, openAttempts);
     }
 
+    private static TasollerPlusDevice CreateEnumerationOnlyDevice(Func<string[]?> readPresentDeviceInstanceIds)
+    {
+        var transport = new TasollerPlusWinUsbTransport(readPresentDeviceInstanceIds, _ => throw new AssertFailedException("The WinUSB connection opener should not be called."));
+        return new TasollerPlusDevice(transport);
+    }
+
     private static void AssertConnectResult(string[]? instanceIds, TasollerPlusConnectResult expected)
     {
-        var transport = new TasollerPlusWinUsbTransport(() => instanceIds, _ => throw new AssertFailedException("The connection opener was called without a unique matching device."));
-        using var device = new TasollerPlusDevice(transport);
+        using var device = CreateEnumerationOnlyDevice(() => instanceIds);
 
         Assert.AreEqual(expected, device.Connect());
         Assert.AreEqual(TasollerPlusConnectionStatus.Disconnected, device.Status);

@@ -21,12 +21,26 @@ namespace TasollerPlus.Connections.WinUsb
             _openConnection = openConnection ?? TasollerPlusWinUsbConnection.Open;
         }
 
+        public TasollerPlusDeviceDetectionResult DetectDevice() => FindMatchingDevice().Result;
+
         public TasollerPlusTransportOpenResult Open()
+        {
+            var (result, instanceId) = FindMatchingDevice();
+            return result switch
+            {
+                TasollerPlusDeviceDetectionResult.DeviceFound when instanceId != null => TasollerPlusTransportOpenResult.FromConnection(_openConnection(instanceId)),
+                TasollerPlusDeviceDetectionResult.DeviceNotFound => TasollerPlusTransportOpenResult.DeviceNotFound,
+                TasollerPlusDeviceDetectionResult.MultipleDevicesFound => TasollerPlusTransportOpenResult.MultipleDevicesFound,
+                _ => TasollerPlusTransportOpenResult.Failed
+            };
+        }
+
+        private (TasollerPlusDeviceDetectionResult Result, string? InstanceId) FindMatchingDevice()
         {
             var instanceIds = _readPresentDeviceInstanceIds();
             if (instanceIds is null)
             {
-                return TasollerPlusTransportOpenResult.Failed;
+                return (TasollerPlusDeviceDetectionResult.DetectionFailed, null);
             }
 
             var matchingInstanceId = default(string);
@@ -39,18 +53,15 @@ namespace TasollerPlus.Connections.WinUsb
 
                 if (matchingInstanceId != null)
                 {
-                    return TasollerPlusTransportOpenResult.MultipleDevicesFound;
+                    return (TasollerPlusDeviceDetectionResult.MultipleDevicesFound, null);
                 }
 
                 matchingInstanceId = instanceId;
             }
 
-            if (matchingInstanceId is null)
-            {
-                return TasollerPlusTransportOpenResult.DeviceNotFound;
-            }
-
-            return TasollerPlusTransportOpenResult.FromConnection(_openConnection(matchingInstanceId));
+            return matchingInstanceId is null
+                ? (TasollerPlusDeviceDetectionResult.DeviceNotFound, null)
+                : (TasollerPlusDeviceDetectionResult.DeviceFound, matchingInstanceId);
         }
 
         private static bool IsTasollerPlusDeviceInstance(string instanceId)

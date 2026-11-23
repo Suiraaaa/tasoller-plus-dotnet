@@ -788,6 +788,8 @@ public sealed class TasollerPlusDeviceTests
             _result = result;
         }
 
+        public TasollerPlusDeviceDetectionResult DetectDevice() => throw new NotSupportedException();
+
         public TasollerPlusTransportOpenResult Open() => _result;
     }
 
@@ -799,6 +801,8 @@ public sealed class TasollerPlusDeviceTests
         {
             _connections = new Queue<ITasollerPlusConnection>(connections);
         }
+
+        public TasollerPlusDeviceDetectionResult DetectDevice() => throw new NotSupportedException();
 
         public TasollerPlusTransportOpenResult Open()
         {

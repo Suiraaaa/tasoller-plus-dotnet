@@ -41,6 +41,8 @@ internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlu
         EnqueueTransfer(null, new TasollerPlusReadTransferResult(default, TasollerPlusTransferStatus.Failed));
     }
 
+    public TasollerPlusDeviceDetectionResult DetectDevice() => throw new NotSupportedException();
+
     public TasollerPlusTransportOpenResult Open()
     {
         return TasollerPlusTransportOpenResult.FromConnection(this);
