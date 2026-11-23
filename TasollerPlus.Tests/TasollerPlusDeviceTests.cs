@@ -17,6 +17,7 @@ public sealed class TasollerPlusDeviceTests
     private const int OverflowTestCapacity = 2;
     private const int OverflowTestReportCount = 3;
     private const int SameTimestampReportCount = 2;
+    private const int LatestInputRetentionReportCount = 2;
     private const int NoPendingReportCount = 0;
     private const long SharedReceiveTimestamp = 123456;
     private const long ExpectedSequenceStep = 1;
@@ -209,6 +210,23 @@ public sealed class TasollerPlusDeviceTests
 
         var expectedSliderValues = new[] { FirstReportSliderValue, SecondReportSliderValue };
         AssertPendingSliderValues(device, expectedSliderValues.Length, expectedSliderValues);
+    }
+
+    [TestMethod]
+    public void TryGetLatestInputRetainsTheLatestFrameAfterReadingAllPendingInputs()
+    {
+        var adapter = CreateAdapterWithReports(FirstReportSliderValue, SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(adapter);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        var latestInput = WaitForLatestSliderValue(device, SecondReportSliderValue);
+        var destination = new TasollerPlusInputFrame[LatestInputRetentionReportCount];
+        Assert.AreEqual(LatestInputRetentionReportCount, device.ReadPendingInputs(destination).Count);
+        Assert.AreEqual(NoPendingReportCount, device.ReadPendingInputs(destination).Count);
+
+        Assert.IsTrue(device.TryGetLatestInput(out var frame), "The latest input was lost after reading all pending inputs.");
+        Assert.AreEqual(latestInput.SequenceNumber, frame.SequenceNumber);
+        Assert.AreEqual(SecondReportSliderValue, frame.GetSliderValue(FirstSliderIndex));
     }
 
     [TestMethod]

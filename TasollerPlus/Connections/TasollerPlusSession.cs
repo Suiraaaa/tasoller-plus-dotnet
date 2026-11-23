@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,25 +15,21 @@ namespace TasollerPlus.Connections
         private readonly Task _connectionTask;
         private readonly object _stateLock;
         private readonly SemaphoreSlim _pendingLedReportSignal;
-        private readonly int _inputBufferCapacity;
         private readonly Func<long> _getTimestamp;
-        private readonly Queue<TasollerPlusInputFrame> _pendingInputs;
+        private readonly TasollerPlusInputBuffer _inputBuffer;
         private byte[]? _pendingLedReport;
-        private TasollerPlusInputFrame? _latestInput;
-        private long _droppedInputCount;
         private long _lastSequenceNumber;
         private TasollerPlusConnectionStatus _status;
 
         public TasollerPlusSession(ITasollerPlusConnection connection, int inputBufferCapacity, Func<long> getTimestamp, long lastSequenceNumber)
         {
-            _inputBufferCapacity = inputBufferCapacity;
             _getTimestamp = getTimestamp;
             _lastSequenceNumber = lastSequenceNumber;
 
             _connectionCancellation = new CancellationTokenSource();
             _stateLock = new object();
             _pendingLedReportSignal = new SemaphoreSlim(initialCount: 0, maxCount: LedReportSignalCapacity);
-            _pendingInputs = new Queue<TasollerPlusInputFrame>(_inputBufferCapacity);
+            _inputBuffer = new TasollerPlusInputBuffer(inputBufferCapacity);
             _status = TasollerPlusConnectionStatus.Connected;
 
             _connectionTask = RunConnectionAsync(connection, _connectionCancellation.Token);
@@ -66,8 +61,7 @@ namespace TasollerPlus.Connections
         {
             lock (_stateLock)
             {
-                frame = _latestInput.GetValueOrDefault();
-                return _latestInput.HasValue;
+                return _inputBuffer.TryGetLatest(out frame);
             }
         }
 
@@ -75,15 +69,7 @@ namespace TasollerPlus.Connections
         {
             lock (_stateLock)
             {
-                var count = Math.Min(destination.Length, _pendingInputs.Count);
-                for (var index = 0; index < count; index++)
-                {
-                    destination[index] = _pendingInputs.Dequeue();
-                }
-
-                var result = new TasollerPlusInputReadResult(count, _droppedInputCount);
-                _droppedInputCount = default;
-                return result;
+                return _inputBuffer.ReadPending(destination);
             }
         }
 
@@ -225,9 +211,7 @@ namespace TasollerPlus.Connections
                     return;
                 }
 
-                _latestInput = null;
-                _pendingInputs.Clear();
-                _droppedInputCount = default;
+                _inputBuffer.Clear();
                 _pendingLedReport = null;
                 _status = status;
             }
@@ -244,14 +228,7 @@ namespace TasollerPlus.Connections
                     return;
                 }
 
-                if (_pendingInputs.Count == _inputBufferCapacity)
-                {
-                    _pendingInputs.Dequeue();
-                    _droppedInputCount++;
-                }
-
-                _pendingInputs.Enqueue(frame);
-                _latestInput = frame;
+                _inputBuffer.Add(frame);
                 _lastSequenceNumber = frame.SequenceNumber;
             }
         }
