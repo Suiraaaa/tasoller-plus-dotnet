@@ -4,19 +4,21 @@ namespace TasollerPlus
 {
     public readonly struct TasollerPlusInputFrame
     {
-        private const byte Fn1ButtonMask = 0b1000_0000;
-        private const byte Fn2ButtonMask = 0b0100_0000;
-        private const int AirBeamCount = 6;
-        private const byte BottomAirBeamMask = 0b0010_0000;
+        private const int BottomAirBeamMask = 0b0000_0001;
+        internal const int AirBeamCount = 6;
 
         private readonly ReadOnlyMemory<byte> _sliderValues;
-        private readonly byte _digitalInputs;
+        private readonly byte _blockedAirBeamMask;
+        private readonly bool _isFn1Pressed;
+        private readonly bool _isFn2Pressed;
         private readonly long _receivedTimestamp;
         private readonly long _sequenceNumber;
 
-        internal TasollerPlusInputFrame(ReadOnlySpan<byte> sliderValues, byte digitalInputs, long receivedTimestamp, long sequenceNumber)
+        internal TasollerPlusInputFrame(ReadOnlySpan<byte> sliderValues, bool isFn1Pressed, bool isFn2Pressed, byte blockedAirBeamMask, long receivedTimestamp, long sequenceNumber)
         {
-            _digitalInputs = digitalInputs;
+            _isFn1Pressed = isFn1Pressed;
+            _isFn2Pressed = isFn2Pressed;
+            _blockedAirBeamMask = blockedAirBeamMask;
             _receivedTimestamp = receivedTimestamp;
             _sequenceNumber = sequenceNumber;
 
@@ -27,9 +29,9 @@ namespace TasollerPlus
 
         public long SequenceNumber => _sequenceNumber;
 
-        public bool IsFn1Pressed => IsDigitalInputActive(Fn1ButtonMask);
+        public bool IsFn1Pressed => _isFn1Pressed;
 
-        public bool IsFn2Pressed => IsDigitalInputActive(Fn2ButtonMask);
+        public bool IsFn2Pressed => _isFn2Pressed;
 
         public byte GetSliderValue(int index)
         {
@@ -48,13 +50,8 @@ namespace TasollerPlus
                 throw new ArgumentOutOfRangeException(nameof(index));
             }
 
-            var beamMask = BottomAirBeamMask >> index;
-            return IsDigitalInputActive(beamMask);
-        }
-
-        private bool IsDigitalInputActive(int mask)
-        {
-            return (_digitalInputs & mask) != 0;
+            var beamMask = BottomAirBeamMask << index;
+            return (_blockedAirBeamMask & beamMask) != 0;
         }
     }
 }
