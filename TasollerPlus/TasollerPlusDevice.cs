@@ -15,6 +15,10 @@ namespace TasollerPlus
         private TasollerPlusConnectionStatus _disconnectedStatus;
         private bool _isDisposed;
 
+        public TasollerPlusDevice() : this(new TasollerPlusWinUsbTransport(TasollerPlusWinUsbDeviceList.ReadPresentDeviceInstanceIds))
+        {
+        }
+
         internal TasollerPlusDevice(ITasollerPlusTransport transport, int inputBufferCapacity = DefaultInputBufferCapacity, Func<long>? getTimestamp = null)
         {
             _transport = transport;
