@@ -1,18 +1,18 @@
 namespace TasollerPlus
 {
-    /// <summary>The outcome of checking for Tasoller Plus devices in WinUSB mode.</summary>
+    /// <summary><see cref="TasollerPlusDevice.DetectDevice"/> によるWinUSBモードの対応機器の検索結果を表します。</summary>
     public enum TasollerPlusDeviceDetectionResult
     {
-        /// <summary>The device list could not be read.</summary>
+        /// <summary>機器一覧を取得できませんでした。</summary>
         DetectionFailed,
 
-        /// <summary>No matching devices were found.</summary>
+        /// <summary>対応機器が見つかりませんでした。</summary>
         DeviceNotFound,
 
-        /// <summary>Exactly one matching device was found.</summary>
+        /// <summary>対応機器が1台見つかりました。</summary>
         DeviceFound,
 
-        /// <summary>At least two matching devices were found.</summary>
+        /// <summary>対応機器が2台以上見つかりました。</summary>
         MultipleDevicesFound
     }
 }
