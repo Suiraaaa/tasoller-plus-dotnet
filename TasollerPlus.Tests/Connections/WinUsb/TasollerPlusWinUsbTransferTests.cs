@@ -15,7 +15,8 @@ public sealed class TasollerPlusWinUsbTransferTests
     private const byte InputPipeId = 0x84;
     private const byte LedOutputPipeId = 0x03;
     private const int BufferLength = 4;
-    private const int ShortWriteLength = 2;
+    private const int ShortTransferLength = 2;
+    private const int OverreportedReadLength = BufferLength + 1;
     private const int NoBytesTransferred = 0;
     private const int SingleCancellationRequest = 1;
     private const int PendingPinCount = 1;
@@ -95,9 +96,26 @@ public sealed class TasollerPlusWinUsbTransferTests
     }
 
     [TestMethod]
+    [DataRow(NoBytesTransferred, true, NoBytesTransferred)]
+    [DataRow(ShortTransferLength, true, ShortTransferLength)]
+    [DataRow(OverreportedReadLength, false, NoBytesTransferred)]
+    public async Task AnImmediateReadAcceptsByteCountsWithinItsBuffer(int reportedByteCount, bool succeeds, int expectedByteCount)
+    {
+        var pipes = new TestPipeOperations(InputPipeId, ErrorSuccess, (uint)reportedByteCount);
+        using var connection = new TasollerPlusWinUsbConnection(string.Empty, pipes);
+        var buffer = new byte[BufferLength];
+
+        var result = await connection.ReadInputAsync(buffer, CancellationToken.None).AsTask().WaitAsync(CompletionTimeout);
+
+        var expectedStatus = succeeds ? TasollerPlusTransferStatus.Succeeded : TasollerPlusTransferStatus.Failed;
+        Assert.AreEqual(expectedStatus, result.Status);
+        Assert.AreEqual(expectedByteCount, result.BytesRead);
+    }
+
+    [TestMethod]
     public async Task AShortImmediateWriteIsReportedAsFailed()
     {
-        var pipes = new TestPipeOperations(LedOutputPipeId, ErrorSuccess, ShortWriteLength);
+        var pipes = new TestPipeOperations(LedOutputPipeId, ErrorSuccess, ShortTransferLength);
         using var connection = new TasollerPlusWinUsbConnection(string.Empty, pipes);
         var buffer = new byte[BufferLength];
 

@@ -8,6 +8,7 @@ namespace TasollerPlus.Connections.WinUsb
 {
     internal sealed class TasollerPlusWinUsbConnection : ITasollerPlusConnection
     {
+        private const uint MinimumInputByteCount = 0;
         private const int ErrorSuccess = 0;
         private const int ErrorDevNotExist = 55;
         private const int ErrorNoSuchDevice = 433;
@@ -47,14 +48,14 @@ namespace TasollerPlus.Connections.WinUsb
 
         public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            var transfer = await TransferAsync(buffer, TasollerPlusWinUsbPipeLayout.InputPipeId, cancellationToken).ConfigureAwait(false);
+            var transfer = await TransferAsync(buffer, TasollerPlusWinUsbPipeLayout.InputPipeId, MinimumInputByteCount, cancellationToken).ConfigureAwait(false);
             return new TasollerPlusReadTransferResult(transfer.ByteCount, transfer.Status);
         }
 
         public async ValueTask<TasollerPlusTransferStatus> WriteOutputAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken)
         {
-            var transfer = await TransferAsync(report, TasollerPlusWinUsbPipeLayout.LedOutputPipeId, cancellationToken).ConfigureAwait(false);
-            return transfer.Status == TasollerPlusTransferStatus.Succeeded && transfer.ByteCount != report.Length ? TasollerPlusTransferStatus.Failed : transfer.Status;
+            var transfer = await TransferAsync(report, TasollerPlusWinUsbPipeLayout.LedOutputPipeId, (uint)report.Length, cancellationToken).ConfigureAwait(false);
+            return transfer.Status;
         }
 
         public void Dispose()
@@ -62,9 +63,10 @@ namespace TasollerPlus.Connections.WinUsb
             _pipes.Dispose();
         }
 
-        private async ValueTask<(TasollerPlusTransferStatus Status, int ByteCount)> TransferAsync(ReadOnlyMemory<byte> buffer, byte pipeId, CancellationToken cancellationToken)
+        private async ValueTask<(TasollerPlusTransferStatus Status, int ByteCount)> TransferAsync(ReadOnlyMemory<byte> buffer, byte pipeId, uint minimumByteCount, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var bufferLength = (uint)buffer.Length;
             using var pinnedBuffer = buffer.Pin();
             using var completion = new TasollerPlusWinUsbCompletion();
             var requestAddress = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlapped>());
@@ -75,7 +77,7 @@ namespace TasollerPlus.Connections.WinUsb
                 using var registration = cancellationToken.Register(() => _pipes.CancelTransfer(requestAddress));
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var submissionError = _pipes.StartTransfer(pipeId, GetBufferAddress(pinnedBuffer), (uint)buffer.Length, requestAddress);
+                var submissionError = _pipes.StartTransfer(pipeId, GetBufferAddress(pinnedBuffer), bufferLength, requestAddress);
                 if (submissionError == ErrorIoPending)
                 {
                     // A cancellation callback may have run before WinUSB received the request.
@@ -98,7 +100,8 @@ namespace TasollerPlus.Connections.WinUsb
                     return (status, default);
                 }
 
-                return byteCount <= (uint)buffer.Length ? (TasollerPlusTransferStatus.Succeeded, (int)byteCount) : (TasollerPlusTransferStatus.Failed, default);
+                var hasValidByteCount = byteCount >= minimumByteCount && byteCount <= bufferLength;
+                return hasValidByteCount ? (TasollerPlusTransferStatus.Succeeded, (int)byteCount) : (TasollerPlusTransferStatus.Failed, default);
             }
             finally
             {
