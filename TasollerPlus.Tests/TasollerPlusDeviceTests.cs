@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading.Channels;
 
 using TasollerPlus.Connections;
 using TasollerPlus.Tests.TestSupport;
@@ -52,6 +53,7 @@ public sealed class TasollerPlusDeviceTests
     private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MinimumLedResendInterval = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan LedReplayObservationTime = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan HeldLedReplayObservationTime = TimeSpan.FromSeconds(2);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
     [TestMethod]
@@ -534,6 +536,65 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task EndingTheConnectionStopsAutomaticLedResendingAndClearsTheHeldColor(bool deviceRemoved)
+    {
+        var resendStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishResend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstConnection = CreateAdapterWithBlockedLedWrite(FirstLedResendWrite, resendStarted, finishResend.Task);
+        var secondConnection = CreateAdapterWithReports(SecondReportSliderValue);
+        using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+
+        try
+        {
+            Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+            await firstConnection.WaitingForInput.WaitAsync(timeout.Token);
+            var slider = new RgbColor[SliderLedColorCount];
+            var air = new RgbColor[AirTowerLedColorCount];
+            slider[FirstSliderIndex] = FirstSliderLedColor;
+            Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+            CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex), await firstConnection.ReadWrittenLedReportAsync(timeout.Token));
+            await resendStarted.Task.WaitAsync(timeout.Token);
+
+            if (deviceRemoved)
+            {
+                firstConnection.RemoveDevice();
+            }
+            else
+            {
+                try
+                {
+                    await Task.Run(device.Disconnect).WaitAsync(LedReportAvailabilityTimeout);
+                }
+                catch (TimeoutException)
+                {
+                    Assert.Fail("Disconnect did not cancel the automatic LED resend.");
+                }
+            }
+
+            var expectedStatus = deviceRemoved ? TasollerPlusConnectionStatus.DeviceRemoved : TasollerPlusConnectionStatus.Disconnected;
+            AssertConnectionEnded(device, firstConnection, expectedStatus);
+            await Assert.ThrowsExactlyAsync<ChannelClosedException>(() => firstConnection.ReadWrittenLedReportAsync(timeout.Token).AsTask());
+
+            timeout.CancelAfter(LedReportAvailabilityTimeout);
+            Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+            await secondConnection.WaitingForInput.WaitAsync(timeout.Token);
+            var firstReportAfterReconnect = secondConnection.ReadWrittenLedReportAsync(timeout.Token).AsTask();
+            await Assert.ThrowsExactlyAsync<TimeoutException>(() => firstReportAfterReconnect.WaitAsync(HeldLedReplayObservationTime), "A held LED color was resent after reconnecting.");
+
+            slider[FirstSliderIndex] = LatestSliderLedColor;
+            Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+            CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedLatestLedReportPrefixHex), await firstReportAfterReconnect);
+        }
+        finally
+        {
+            finishResend.TrySetResult();
+        }
+    }
+
+    [TestMethod]
     public void InputReceiveFailureClosesTheConnectionAndPreservesTheErrorStatus()
     {
         var adapter = CreateAdapterWithReports(FirstReportSliderValue);
@@ -567,6 +628,32 @@ public sealed class TasollerPlusDeviceTests
         AssertConnectionEnded(device, adapter, expectedStatus);
         device.Disconnect();
         Assert.AreEqual(expectedStatus, device.Status);
+    }
+
+    [TestMethod]
+    [DataRow(false, TasollerPlusConnectionStatus.LedSendError)]
+    [DataRow(true, TasollerPlusConnectionStatus.DeviceRemoved)]
+    public async Task AutomaticLedResendFailureEndsTheConnection(bool deviceRemoved, TasollerPlusConnectionStatus expectedStatus)
+    {
+        var failure = deviceRemoved ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
+        var writeCount = 0;
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), _ =>
+        {
+            var status = Interlocked.Increment(ref writeCount) == FirstLedWrite ? TasollerPlusTransferStatus.Succeeded : failure;
+            return ValueTask.FromResult(status);
+        });
+        using var device = new TasollerPlusDevice(adapter);
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+        await adapter.WaitingForInput.WaitAsync(timeout.Token);
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex), await adapter.ReadWrittenLedReportAsync(timeout.Token));
+
+        AssertConnectionEnded(device, adapter, expectedStatus);
     }
 
     [TestMethod]
