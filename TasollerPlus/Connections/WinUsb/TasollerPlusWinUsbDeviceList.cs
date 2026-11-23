@@ -28,29 +28,11 @@ namespace TasollerPlus.Connections.WinUsb
                 return null;
             }
 
-            for (var attempt = 0; attempt < MaxEnumerationAttempts; attempt++)
+            return ReadMultiStringList(() =>
             {
                 var sizeResult = GetDeviceIdListSize(out var characterCount, WinUsbServiceName, DeviceListFlags);
-                if (sizeResult != ConfigurationSuccess)
-                {
-                    return null;
-                }
-
-                var buffer = new char[characterCount];
-                var listResult = GetDeviceIdList(WinUsbServiceName, buffer, characterCount, DeviceListFlags);
-                if (listResult == ConfigurationSuccess)
-                {
-                    return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries);
-                }
-
-                // A newly attached device can grow the list after the size query.
-                if (listResult != ConfigurationBufferTooSmall)
-                {
-                    return null;
-                }
-            }
-
-            return null;
+                return (sizeResult, characterCount);
+            }, buffer => GetDeviceIdList(WinUsbServiceName, buffer, (uint)buffer.Length, DeviceListFlags));
         }
 
         public static bool IsDeviceAbsent(string instanceId)
@@ -90,30 +72,40 @@ namespace TasollerPlus.Connections.WinUsb
             }
         }
 
-        private static string[] ReadPresentInterfacePathsForClass(string instanceId, Guid interfaceClass)
+        public static string[]? ReadMultiStringList(Func<(uint Result, uint CharacterCount)> getListSize, Func<char[], uint> readList)
         {
             for (var attempt = 0; attempt < MaxEnumerationAttempts; attempt++)
             {
-                var sizeResult = GetDeviceInterfaceListSize(out var characterCount, ref interfaceClass, instanceId, PresentDeviceInterfaces);
+                var (sizeResult, characterCount) = getListSize();
                 if (sizeResult != ConfigurationSuccess)
                 {
-                    break;
+                    return null;
                 }
 
                 var buffer = new char[characterCount];
-                var listResult = GetDeviceInterfaceList(ref interfaceClass, instanceId, buffer, characterCount, PresentDeviceInterfaces);
+                var listResult = readList(buffer);
                 if (listResult == ConfigurationSuccess)
                 {
                     return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries);
                 }
 
+                // The device list can grow between the size query and the read.
                 if (listResult != ConfigurationBufferTooSmall)
                 {
-                    break;
+                    return null;
                 }
             }
 
-            return Array.Empty<string>();
+            return null;
+        }
+
+        private static string[] ReadPresentInterfacePathsForClass(string instanceId, Guid interfaceClass)
+        {
+            return ReadMultiStringList(() =>
+            {
+                var sizeResult = GetDeviceInterfaceListSize(out var characterCount, ref interfaceClass, instanceId, PresentDeviceInterfaces);
+                return (sizeResult, characterCount);
+            }, buffer => GetDeviceInterfaceList(ref interfaceClass, instanceId, buffer, (uint)buffer.Length, PresentDeviceInterfaces)) ?? Array.Empty<string>();
         }
 
         [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_ID_List_SizeW", CharSet = CharSet.Unicode, ExactSpelling = true)]
