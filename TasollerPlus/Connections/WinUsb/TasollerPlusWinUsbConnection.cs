@@ -18,11 +18,14 @@ namespace TasollerPlus.Connections.WinUsb
 
         private readonly string _instanceId;
         private readonly ITasollerPlusWinUsbPipeOperations _pipes;
+        private readonly Func<string, bool> _isDeviceAbsent;
 
-        public TasollerPlusWinUsbConnection(string instanceId, ITasollerPlusWinUsbPipeOperations pipes)
+        public TasollerPlusWinUsbConnection(string instanceId, ITasollerPlusWinUsbPipeOperations pipes, Func<string, bool>? isDeviceAbsent = null)
         {
             _instanceId = instanceId;
             _pipes = pipes;
+
+            _isDeviceAbsent = isDeviceAbsent ?? TasollerPlusWinUsbDeviceList.IsDeviceAbsent;
         }
 
         public static TasollerPlusWinUsbConnection? Open(string instanceId)
@@ -37,13 +40,6 @@ namespace TasollerPlus.Connections.WinUsb
             }
 
             return null;
-        }
-
-        public static TasollerPlusTransferStatus ClassifyTransferFailure(int error, string instanceId, Func<string, bool> isDeviceAbsent)
-        {
-            var reportsRemoval = error == ErrorDevNotExist || error == ErrorNoSuchDevice || error == ErrorDeviceNotConnected || error == ErrorDeviceRemoved;
-            var deviceAbsent = reportsRemoval || isDeviceAbsent(instanceId);
-            return deviceAbsent ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
         }
 
         public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
@@ -96,7 +92,7 @@ namespace TasollerPlus.Connections.WinUsb
                 if (error != ErrorSuccess)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var status = ClassifyTransferFailure(error, _instanceId, TasollerPlusWinUsbDeviceList.IsDeviceAbsent);
+                    var status = ClassifyTransferFailure(error);
                     return (status, default);
                 }
 
@@ -107,6 +103,13 @@ namespace TasollerPlus.Connections.WinUsb
             {
                 Marshal.FreeHGlobal(requestAddress);
             }
+        }
+
+        private TasollerPlusTransferStatus ClassifyTransferFailure(int error)
+        {
+            var reportsRemoval = error == ErrorDevNotExist || error == ErrorNoSuchDevice || error == ErrorDeviceNotConnected || error == ErrorDeviceRemoved;
+            var deviceAbsent = reportsRemoval || _isDeviceAbsent(_instanceId);
+            return deviceAbsent ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
         }
 
         private static unsafe IntPtr GetBufferAddress(MemoryHandle buffer)

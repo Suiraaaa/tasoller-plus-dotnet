@@ -12,6 +12,7 @@ namespace TasollerPlus.Tests.Connections.WinUsb;
 [SupportedOSPlatform("windows")]
 public sealed class TasollerPlusWinUsbTransferTests
 {
+    private const string OpenedDeviceInstanceId = @"USB\VID_0E8F&PID_1231&MI_00\OPENED-DEVICE";
     private const byte InputPipeId = 0x84;
     private const byte LedOutputPipeId = 0x03;
     private const int BufferLength = 4;
@@ -22,10 +23,15 @@ public sealed class TasollerPlusWinUsbTransferTests
     private const int PendingPinCount = 1;
     private const int ReleasedPinCount = 0;
     private const int ErrorSuccess = 0;
+    private const int ErrorGeneralFailure = 31;
+    private const int ErrorDevNotExist = 55;
+    private const int ErrorSemaphoreTimeout = 121;
+    private const int ErrorNoSuchDevice = 433;
     private const int ErrorOperationAborted = 995;
     private const int ErrorIoIncomplete = 996;
     private const int ErrorIoPending = 997;
     private const int ErrorDeviceNotConnected = 1167;
+    private const int ErrorDeviceRemoved = 1617;
     private static readonly TimeSpan CompletionTimeout = TimeSpan.FromSeconds(5);
 
     [TestMethod]
@@ -122,6 +128,63 @@ public sealed class TasollerPlusWinUsbTransferTests
         var status = await connection.WriteOutputAsync(buffer, CancellationToken.None).AsTask().WaitAsync(CompletionTimeout);
 
         Assert.AreEqual(TasollerPlusTransferStatus.Failed, status);
+    }
+
+    [TestMethod]
+    [DataRow(ErrorDevNotExist)]
+    [DataRow(ErrorNoSuchDevice)]
+    [DataRow(ErrorDeviceNotConnected)]
+    [DataRow(ErrorDeviceRemoved)]
+    public async Task ReadReportsDeviceRemovalWithoutLookingUpTheDevice(int error)
+    {
+        var pipes = new TestPipeOperations(InputPipeId, error, NoBytesTransferred);
+        using var connection = new TasollerPlusWinUsbConnection(OpenedDeviceInstanceId, pipes, _ => throw new AssertFailedException("An explicit removal code does not require a device lookup."));
+        var buffer = new byte[BufferLength];
+
+        var result = await connection.ReadInputAsync(buffer, CancellationToken.None).AsTask().WaitAsync(CompletionTimeout);
+
+        Assert.AreEqual(TasollerPlusTransferStatus.DeviceRemoved, result.Status);
+        Assert.AreEqual(NoBytesTransferred, result.BytesRead);
+    }
+
+    [TestMethod]
+    [DataRow(ErrorGeneralFailure, true, (int)TasollerPlusTransferStatus.DeviceRemoved)]
+    [DataRow(ErrorGeneralFailure, false, (int)TasollerPlusTransferStatus.Failed)]
+    [DataRow(ErrorSemaphoreTimeout, false, (int)TasollerPlusTransferStatus.Failed)]
+    public async Task ReadUsesTheOpenedDevicePresenceAfterAnUnspecifiedError(int error, bool deviceAbsent, int expectedStatus)
+    {
+        var pipes = new TestPipeOperations(InputPipeId, error, NoBytesTransferred);
+        using var connection = CreateConnectionWithDevicePresence(pipes, deviceAbsent);
+        var buffer = new byte[BufferLength];
+
+        var result = await connection.ReadInputAsync(buffer, CancellationToken.None).AsTask().WaitAsync(CompletionTimeout);
+
+        Assert.AreEqual((TasollerPlusTransferStatus)expectedStatus, result.Status);
+        Assert.AreEqual(NoBytesTransferred, result.BytesRead);
+    }
+
+    [TestMethod]
+    [DataRow(true, (int)TasollerPlusTransferStatus.DeviceRemoved)]
+    [DataRow(false, (int)TasollerPlusTransferStatus.Failed)]
+    public async Task WriteUsesTheOpenedDevicePresenceWhenThePendingTransferFails(bool deviceAbsent, int expectedStatus)
+    {
+        var pipes = new TestPipeOperations(LedOutputPipeId, ErrorIoPending, NoBytesTransferred);
+        using var connection = CreateConnectionWithDevicePresence(pipes, deviceAbsent);
+        var buffer = new byte[BufferLength];
+
+        var transfer = connection.WriteOutputAsync(buffer, CancellationToken.None).AsTask();
+        pipes.Complete(ErrorGeneralFailure);
+
+        Assert.AreEqual((TasollerPlusTransferStatus)expectedStatus, await transfer.WaitAsync(CompletionTimeout));
+    }
+
+    private static TasollerPlusWinUsbConnection CreateConnectionWithDevicePresence(TestPipeOperations pipes, bool deviceAbsent)
+    {
+        return new TasollerPlusWinUsbConnection(OpenedDeviceInstanceId, pipes, instanceId =>
+        {
+            Assert.AreEqual(OpenedDeviceInstanceId, instanceId);
+            return deviceAbsent;
+        });
     }
 
     private sealed class TestPipeOperations : ITasollerPlusWinUsbPipeOperations
