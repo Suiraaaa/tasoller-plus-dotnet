@@ -14,7 +14,9 @@ namespace TasollerPlus
         private const uint DeviceListFlags = FilterService | FilterPresent | DoNotGenerateDeviceNode;
         private const uint EnumerateInterfaceClasses = 0x00000001;
         private const uint PresentDeviceInterfaces = 0x00000000;
+        private const uint LocatePresentDeviceNode = 0x00000000;
         private const uint ConfigurationSuccess = 0x00000000;
+        private const uint ConfigurationNoSuchDeviceNode = 0x0000000D;
         private const uint ConfigurationBufferTooSmall = 0x0000001A;
         private const uint ConfigurationInvalidData = 0x0000001F;
         private const int MaxEnumerationAttempts = 3;
@@ -49,6 +51,16 @@ namespace TasollerPlus
             }
 
             return null;
+        }
+
+        public static bool IsDeviceAbsent(string instanceId)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || string.IsNullOrEmpty(instanceId))
+            {
+                return false;
+            }
+
+            return LocateDeviceNode(out _, instanceId, LocatePresentDeviceNode) == ConfigurationNoSuchDeviceNode;
         }
 
         public static IEnumerable<string> ReadPresentInterfacePaths(string instanceId)
@@ -109,6 +121,9 @@ namespace TasollerPlus
 
         [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Get_Device_ID_ListW", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern uint GetDeviceIdList(string filter, [Out] char[] buffer, uint characterCount, uint flags);
+
+        [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Locate_DevNodeW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint LocateDeviceNode(out uint deviceNode, string instanceId, uint flags);
 
         [DllImport(ConfigurationManagerLibrary, EntryPoint = "CM_Enumerate_Classes", ExactSpelling = true)]
         private static extern uint EnumerateDeviceClasses(uint classIndex, out Guid interfaceClass, uint flags);

@@ -18,14 +18,19 @@ namespace TasollerPlus
         private const uint OpenExisting = 3;
         private const uint FileFlagOverlapped = 0x40000000;
         private const uint FileAttributeNormal = 0x00000080;
+        private const int ErrorDevNotExist = 55;
+        private const int ErrorNoSuchDevice = 433;
         private const int ErrorIoPending = 997;
         private const int ErrorDeviceNotConnected = 1167;
+        private const int ErrorDeviceRemoved = 1617;
 
+        private readonly string _instanceId;
         private readonly SafeFileHandle _fileHandle;
         private readonly TasollerPlusWinUsbInterfaceHandle _interfaceHandle;
 
-        private TasollerPlusWinUsbConnection(SafeFileHandle fileHandle, TasollerPlusWinUsbInterfaceHandle interfaceHandle)
+        private TasollerPlusWinUsbConnection(string instanceId, SafeFileHandle fileHandle, TasollerPlusWinUsbInterfaceHandle interfaceHandle)
         {
+            _instanceId = instanceId;
             _fileHandle = fileHandle;
             _interfaceHandle = interfaceHandle;
         }
@@ -34,7 +39,7 @@ namespace TasollerPlus
         {
             foreach (var path in TasollerPlusWinUsbDeviceList.ReadPresentInterfacePaths(instanceId))
             {
-                var connection = OpenPath(path);
+                var connection = OpenPath(path, instanceId);
                 if (connection != null)
                 {
                     return connection;
@@ -42,6 +47,13 @@ namespace TasollerPlus
             }
 
             return null;
+        }
+
+        public static TasollerPlusTransferStatus ClassifyTransferFailure(int error, string instanceId, Func<string, bool> isDeviceAbsent)
+        {
+            var reportsRemoval = error == ErrorDevNotExist || error == ErrorNoSuchDevice || error == ErrorDeviceNotConnected || error == ErrorDeviceRemoved;
+            var deviceAbsent = reportsRemoval || isDeviceAbsent(instanceId);
+            return deviceAbsent ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
         }
 
         public ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)
@@ -65,7 +77,7 @@ namespace TasollerPlus
             _fileHandle.Dispose();
         }
 
-        private static TasollerPlusWinUsbConnection? OpenPath(string path)
+        private static TasollerPlusWinUsbConnection? OpenPath(string path, string instanceId)
         {
             var fileHandle = CreateFile(path, GenericRead | GenericWrite, ShareRead | ShareWrite, IntPtr.Zero, OpenExisting, FileFlagOverlapped | FileAttributeNormal, IntPtr.Zero);
             TasollerPlusWinUsbInterfaceHandle? interfaceHandle = null;
@@ -82,7 +94,7 @@ namespace TasollerPlus
                     return null;
                 }
 
-                var connection = new TasollerPlusWinUsbConnection(fileHandle, interfaceHandle);
+                var connection = new TasollerPlusWinUsbConnection(instanceId, fileHandle, interfaceHandle);
                 ownershipTransferred = true;
                 return connection;
             }
@@ -121,7 +133,7 @@ namespace TasollerPlus
                 if (!succeeded)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var status = error == ErrorDeviceNotConnected ? TasollerPlusTransferStatus.DeviceRemoved : TasollerPlusTransferStatus.Failed;
+                    var status = ClassifyTransferFailure(error, _instanceId, TasollerPlusWinUsbDeviceList.IsDeviceAbsent);
                     return (status, 0);
                 }
             }
