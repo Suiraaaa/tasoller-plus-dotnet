@@ -40,6 +40,8 @@ public sealed class TasollerPlusDeviceTests
     private const int LedReportLength = 114;
     private const int SliderLedColorCount = 31;
     private const int AirTowerLedColorCount = 3;
+    private const int FirstLedWrite = 1;
+    private const int FirstLedResendWrite = FirstLedWrite + 1;
     private const int ObservedAutomaticResends = 2;
     private const string ExpectedFirstLedReportPrefixHex = "444C02123456";
     private const string ExpectedLatestLedReportPrefixHex = "444C026789AB";
@@ -224,7 +226,7 @@ public sealed class TasollerPlusDeviceTests
     {
         var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishFirstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var adapter = CreateAdapterWithBlockedFirstLedWrite(firstWriteStarted, finishFirstWrite.Task);
+        var adapter = CreateAdapterWithBlockedLedWrite(FirstLedWrite, firstWriteStarted, finishFirstWrite.Task);
         using var device = new TasollerPlusDevice(adapter);
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
         using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
@@ -244,6 +246,37 @@ public sealed class TasollerPlusDeviceTests
         var nextReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
         CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex), firstReport);
         CollectionAssert.AreEqual(CreateExpectedLedReport(ExpectedLatestLedReportPrefixHex), nextReport, "The next write did not contain the most recent pending colors.");
+    }
+
+    [TestMethod]
+    public async Task TrySetLedColorsResendsTheLatestColorsAfterAnInFlightResend()
+    {
+        var resendStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishResend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = CreateAdapterWithBlockedLedWrite(FirstLedResendWrite, resendStarted, finishResend.Task);
+        using var device = new TasollerPlusDevice(adapter);
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+
+        var expectedOriginalReport = CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex);
+        CollectionAssert.AreEqual(expectedOriginalReport, await adapter.ReadWrittenLedReportAsync(timeout.Token));
+        await resendStarted.Task.WaitAsync(timeout.Token);
+
+        slider[FirstSliderIndex] = default;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        slider[FirstSliderIndex] = LatestSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+        finishResend.SetResult();
+
+        var expectedLatestReport = CreateExpectedLedReport(ExpectedLatestLedReportPrefixHex);
+        CollectionAssert.AreEqual(expectedOriginalReport, await adapter.ReadWrittenLedReportAsync(timeout.Token));
+        CollectionAssert.AreEqual(expectedLatestReport, await adapter.ReadWrittenLedReportAsync(timeout.Token), "The next write did not contain the most recent pending colors.");
+        CollectionAssert.AreEqual(expectedLatestReport, await adapter.ReadWrittenLedReportAsync(timeout.Token), "The next automatic resend did not use the latest successful colors.");
     }
 
     [TestMethod]
@@ -473,7 +506,7 @@ public sealed class TasollerPlusDeviceTests
     public async Task ReconnectingAfterDeviceRemovalDoesNotReplayPendingLedColors()
     {
         var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var firstConnection = CreateAdapterWithBlockedFirstLedWrite(firstWriteStarted, Task.Delay(Timeout.InfiniteTimeSpan));
+        var firstConnection = CreateAdapterWithBlockedLedWrite(FirstLedWrite, firstWriteStarted, Task.Delay(Timeout.InfiniteTimeSpan));
         var secondConnection = CreateAdapterWithReports(SecondReportSliderValue);
         using var device = new TasollerPlusDevice(new QueuedConnectionAdapter(firstConnection, secondConnection));
         Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
@@ -585,13 +618,15 @@ public sealed class TasollerPlusDeviceTests
         return adapter;
     }
 
-    private static SingleDeviceAdapter CreateAdapterWithBlockedFirstLedWrite(TaskCompletionSource firstWriteStarted, Task finishFirstWrite)
+    private static SingleDeviceAdapter CreateAdapterWithBlockedLedWrite(int writeNumber, TaskCompletionSource writeStarted, Task finishWrite)
     {
+        var writeCount = 0;
         return new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), async cancellationToken =>
         {
-            if (firstWriteStarted.TrySetResult())
+            if (Interlocked.Increment(ref writeCount) == writeNumber)
             {
-                await finishFirstWrite.WaitAsync(cancellationToken).ConfigureAwait(false);
+                writeStarted.SetResult();
+                await finishWrite.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
 
             return TasollerPlusTransferStatus.Succeeded;
