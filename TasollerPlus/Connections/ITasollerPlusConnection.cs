@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections
 {
     internal interface ITasollerPlusConnection : IDisposable
     {

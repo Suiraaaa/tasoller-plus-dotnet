@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     internal static class TasollerPlusWinUsbPipeLayout
     {

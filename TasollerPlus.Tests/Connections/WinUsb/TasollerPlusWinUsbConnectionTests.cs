@@ -1,4 +1,7 @@
-namespace TasollerPlus.Tests;
+using TasollerPlus.Connections;
+using TasollerPlus.Connections.WinUsb;
+
+namespace TasollerPlus.Tests.Connections.WinUsb;
 
 [TestClass]
 public sealed class TasollerPlusWinUsbConnectionTests

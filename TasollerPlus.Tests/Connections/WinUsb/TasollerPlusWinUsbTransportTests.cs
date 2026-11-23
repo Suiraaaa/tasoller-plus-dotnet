@@ -1,4 +1,7 @@
-namespace TasollerPlus.Tests;
+using TasollerPlus.Connections.WinUsb;
+using TasollerPlus.Tests.TestSupport;
+
+namespace TasollerPlus.Tests.Connections.WinUsb;
 
 [TestClass]
 public sealed class TasollerPlusWinUsbTransportTests
@@ -49,7 +52,7 @@ public sealed class TasollerPlusWinUsbTransportTests
         var report = new byte[InputReportLength];
         "DBT"u8.CopyTo(report);
         report[FirstSliderOffset] = ExpectedSliderValue;
-        var connection = new TasollerPlusDeviceTests.SingleDeviceAdapter(report);
+        var connection = new SingleDeviceAdapter(report);
         var instanceIds = new[] { NonMatchingInstanceId, MatchingInstanceId };
         var transport = new TasollerPlusWinUsbTransport(() => instanceIds, instanceId =>
         {

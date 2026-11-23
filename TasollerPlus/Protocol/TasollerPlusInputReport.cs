@@ -1,6 +1,6 @@
 using System;
 
-namespace TasollerPlus
+namespace TasollerPlus.Protocol
 {
     internal static class TasollerPlusInputReport
     {

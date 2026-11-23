@@ -4,7 +4,9 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace TasollerPlus
+using TasollerPlus.Protocol;
+
+namespace TasollerPlus.Connections
 {
     internal sealed class TasollerPlusSession : IDisposable
     {

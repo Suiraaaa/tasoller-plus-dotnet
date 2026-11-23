@@ -1,6 +1,6 @@
 using System;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     internal sealed class TasollerPlusWinUsbTransport : ITasollerPlusTransport
     {
@@ -10,6 +10,10 @@ namespace TasollerPlus
 
         private readonly Func<string[]?> _readPresentDeviceInstanceIds;
         private readonly Func<string, ITasollerPlusConnection?> _openConnection;
+
+        public TasollerPlusWinUsbTransport() : this(TasollerPlusWinUsbDeviceList.ReadPresentDeviceInstanceIds)
+        {
+        }
 
         public TasollerPlusWinUsbTransport(Func<string[]?> readPresentDeviceInstanceIds, Func<string, ITasollerPlusConnection?>? openConnection = null)
         {

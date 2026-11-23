@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     internal sealed class TasollerPlusWinUsbConnection : ITasollerPlusConnection
     {

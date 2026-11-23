@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     internal static class TasollerPlusWinUsbDeviceList
     {

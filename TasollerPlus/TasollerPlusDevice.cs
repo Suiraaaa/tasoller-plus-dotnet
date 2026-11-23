@@ -1,6 +1,10 @@
 using System;
 using System.Diagnostics;
 
+using TasollerPlus.Connections;
+using TasollerPlus.Connections.WinUsb;
+using TasollerPlus.Protocol;
+
 namespace TasollerPlus
 {
     public sealed class TasollerPlusDevice : IDisposable
@@ -15,7 +19,7 @@ namespace TasollerPlus
         private TasollerPlusConnectionStatus _disconnectedStatus;
         private bool _isDisposed;
 
-        public TasollerPlusDevice() : this(new TasollerPlusWinUsbTransport(TasollerPlusWinUsbDeviceList.ReadPresentDeviceInstanceIds))
+        public TasollerPlusDevice() : this(new TasollerPlusWinUsbTransport())
         {
         }
 

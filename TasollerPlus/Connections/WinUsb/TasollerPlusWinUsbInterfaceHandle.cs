@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     internal sealed class TasollerPlusWinUsbInterfaceHandle : SafeHandleZeroOrMinusOneIsInvalid
     {

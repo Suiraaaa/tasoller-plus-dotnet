@@ -1,4 +1,4 @@
-namespace TasollerPlus
+namespace TasollerPlus.Connections
 {
     internal readonly struct TasollerPlusReadTransferResult
     {

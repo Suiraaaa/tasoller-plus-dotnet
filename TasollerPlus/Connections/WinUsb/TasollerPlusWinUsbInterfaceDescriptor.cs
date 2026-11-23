@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace TasollerPlus
+namespace TasollerPlus.Connections.WinUsb
 {
     [StructLayout(LayoutKind.Sequential)]
     internal struct TasollerPlusWinUsbInterfaceDescriptor

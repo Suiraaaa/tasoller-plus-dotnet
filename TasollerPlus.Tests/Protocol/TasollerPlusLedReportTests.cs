@@ -1,4 +1,6 @@
-namespace TasollerPlus.Tests;
+using TasollerPlus.Protocol;
+
+namespace TasollerPlus.Tests.Protocol;
 
 [TestClass]
 public sealed class TasollerPlusLedReportTests
