@@ -41,10 +41,9 @@ internal sealed class SingleDeviceAdapter : ITasollerPlusTransport, ITasollerPlu
         EnqueueTransfer(null, new TasollerPlusReadTransferResult(default, TasollerPlusTransferStatus.Failed));
     }
 
-    public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
+    public TasollerPlusTransportOpenResult Open()
     {
-        connection = this;
-        return TasollerPlusTransportOpenResult.Opened;
+        return TasollerPlusTransportOpenResult.FromConnection(this);
     }
 
     public async ValueTask<TasollerPlusReadTransferResult> ReadInputAsync(Memory<byte> buffer, CancellationToken cancellationToken)

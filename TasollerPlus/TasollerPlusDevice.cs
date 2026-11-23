@@ -54,19 +54,14 @@ namespace TasollerPlus
 
             Disconnect();
 
-            var openResult = _transport.Open(out var connection);
-            switch (openResult)
+            var openResult = _transport.Open();
+            var connection = openResult.Connection;
+            if (connection != null)
             {
-                case TasollerPlusTransportOpenResult.DeviceNotFound:
-                    return TasollerPlusConnectResult.DeviceNotFound;
-                case TasollerPlusTransportOpenResult.MultipleDevicesFound:
-                    return TasollerPlusConnectResult.MultipleDevicesFound;
-                case TasollerPlusTransportOpenResult.Opened when connection != null:
-                    _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
-                    return TasollerPlusConnectResult.Success;
-                default:
-                    return TasollerPlusConnectResult.ConnectionFailed;
+                _session = new TasollerPlusSession(connection, InputBufferCapacity, _getTimestamp, _lastSequenceNumber);
             }
+
+            return openResult.ConnectResult;
         }
 
         public void Disconnect()

@@ -21,9 +21,8 @@ namespace TasollerPlus.Connections.WinUsb
             _openConnection = openConnection ?? TasollerPlusWinUsbConnection.Open;
         }
 
-        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
+        public TasollerPlusTransportOpenResult Open()
         {
-            connection = null;
             var instanceIds = _readPresentDeviceInstanceIds();
             if (instanceIds is null)
             {
@@ -51,8 +50,7 @@ namespace TasollerPlus.Connections.WinUsb
                 return TasollerPlusTransportOpenResult.DeviceNotFound;
             }
 
-            connection = _openConnection(matchingInstanceId);
-            return connection is null ? TasollerPlusTransportOpenResult.Failed : TasollerPlusTransportOpenResult.Opened;
+            return TasollerPlusTransportOpenResult.FromConnection(_openConnection(matchingInstanceId));
         }
 
         private static bool IsTasollerPlusDeviceInstance(string instanceId)

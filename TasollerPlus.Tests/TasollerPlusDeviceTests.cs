@@ -82,9 +82,9 @@ public sealed class TasollerPlusDeviceTests
     }
 
     [TestMethod]
-    public void ConnectReturnsConnectionFailedWhenTheConnectionIsMissing()
+    public void ConnectReturnsConnectionFailedWhenTheTransportReturnsTheDefaultResult()
     {
-        var adapter = new OpenResultAdapter(TasollerPlusTransportOpenResult.Opened);
+        var adapter = new OpenResultAdapter(default);
         AssertUnsuccessfulConnect(adapter, TasollerPlusConnectResult.ConnectionFailed);
     }
 
@@ -619,11 +619,7 @@ public sealed class TasollerPlusDeviceTests
             _result = result;
         }
 
-        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
-        {
-            connection = null;
-            return _result;
-        }
+        public TasollerPlusTransportOpenResult Open() => _result;
     }
 
     internal sealed class QueuedConnectionAdapter : ITasollerPlusTransport
@@ -635,9 +631,9 @@ public sealed class TasollerPlusDeviceTests
             _connections = new Queue<ITasollerPlusConnection>(connections);
         }
 
-        public TasollerPlusTransportOpenResult Open(out ITasollerPlusConnection? connection)
+        public TasollerPlusTransportOpenResult Open()
         {
-            return _connections.TryDequeue(out connection) ? TasollerPlusTransportOpenResult.Opened : TasollerPlusTransportOpenResult.DeviceNotFound;
+            return _connections.TryDequeue(out var connection) ? TasollerPlusTransportOpenResult.FromConnection(connection) : TasollerPlusTransportOpenResult.DeviceNotFound;
         }
     }
 }
