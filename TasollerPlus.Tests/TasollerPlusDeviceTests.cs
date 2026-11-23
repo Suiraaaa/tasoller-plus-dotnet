@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+
 using TasollerPlus.Connections;
 using TasollerPlus.Tests.TestSupport;
 
@@ -37,6 +40,7 @@ public sealed class TasollerPlusDeviceTests
     private const int LedReportLength = 114;
     private const int SliderLedColorCount = 31;
     private const int AirTowerLedColorCount = 3;
+    private const int ObservedAutomaticResends = 2;
     private const string ExpectedFirstLedReportPrefixHex = "444C02123456";
     private const string ExpectedLatestLedReportPrefixHex = "444C026789AB";
     private static readonly RgbColor FirstSliderLedColor = new RgbColor(0x12, 0x34, 0x56);
@@ -44,6 +48,7 @@ public sealed class TasollerPlusDeviceTests
     private static readonly byte[] AirBeamReportBitsFromBottom = { 0b0010_0000, 0b0001_0000, 0b0000_1000, 0b0000_0100, 0b0000_0010, 0b0000_0001 };
     private static readonly TimeSpan InputAvailabilityTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LedReportAvailabilityTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MinimumLedResendInterval = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan LedReplayObservationTime = TimeSpan.FromMilliseconds(250);
     private static ReadOnlySpan<byte> InputReportHeader => "DBT"u8;
 
@@ -170,6 +175,48 @@ public sealed class TasollerPlusDeviceTests
         Assert.IsTrue(device.TrySetLedColors(slider, leftAir, rightAir), "The connected device did not accept the LED colors.");
         var actualReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
         CollectionAssert.AreEqual(expectedReport, actualReport);
+    }
+
+    [TestMethod]
+    public async Task TrySetLedColorsAutomaticallyResendsTheReportEverySecond()
+    {
+        var writeTimestamps = new ConcurrentQueue<long>();
+        var adapter = new SingleDeviceAdapter(CreateInputReport(FirstReportSliderValue), _ =>
+        {
+            writeTimestamps.Enqueue(Stopwatch.GetTimestamp());
+            return ValueTask.FromResult(TasollerPlusTransferStatus.Succeeded);
+        });
+        using var device = new TasollerPlusDevice(adapter);
+        using var timeout = new CancellationTokenSource(LedReportAvailabilityTimeout);
+        Assert.AreEqual(TasollerPlusConnectResult.Success, device.Connect());
+
+        var slider = new RgbColor[SliderLedColorCount];
+        var air = new RgbColor[AirTowerLedColorCount];
+        slider[FirstSliderIndex] = FirstSliderLedColor;
+        Assert.IsTrue(device.TrySetLedColors(slider, air, air));
+
+        var expectedReport = CreateExpectedLedReport(ExpectedFirstLedReportPrefixHex);
+        var initialReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
+        CollectionAssert.AreEqual(expectedReport, initialReport);
+        Assert.IsTrue(writeTimestamps.TryDequeue(out var previousWriteTimestamp));
+
+        for (var resendIndex = 0; resendIndex < ObservedAutomaticResends; resendIndex++)
+        {
+            try
+            {
+                var resentReport = await adapter.ReadWrittenLedReportAsync(timeout.Token);
+                CollectionAssert.AreEqual(expectedReport, resentReport);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                Assert.Fail("The LED report was not resent after the successful write.");
+            }
+
+            Assert.IsTrue(writeTimestamps.TryDequeue(out var resendTimestamp));
+            var elapsed = Stopwatch.GetElapsedTime(previousWriteTimestamp, resendTimestamp);
+            Assert.IsTrue(elapsed >= MinimumLedResendInterval, $"The LED report was resent after only {elapsed.TotalMilliseconds:F0} milliseconds.");
+            previousWriteTimestamp = resendTimestamp;
+        }
     }
 
     [TestMethod]

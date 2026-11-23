@@ -10,6 +10,8 @@ namespace TasollerPlus.Connections
     internal sealed class TasollerPlusSession : IDisposable
     {
         private const int LedReportSignalCapacity = 1;
+        private const int DefaultLedResendIntervalSeconds = 1;
+        private static readonly TimeSpan DefaultLedResendInterval = TimeSpan.FromSeconds(DefaultLedResendIntervalSeconds);
 
         private readonly CancellationTokenSource _connectionCancellation;
         private readonly Task _connectionTask;
@@ -168,10 +170,30 @@ namespace TasollerPlus.Connections
 
         private async Task SendLedReportsAsync(ITasollerPlusConnection connection, CancellationToken cancellationToken)
         {
+            var lastSentReport = default(byte[]?);
             while (!cancellationToken.IsCancellationRequested)
             {
-                await _pendingLedReportSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
-                var report = TakePendingLedReport();
+                var timeout = lastSentReport is null ? Timeout.InfiniteTimeSpan : DefaultLedResendInterval;
+                var pendingReportSignaled = await _pendingLedReportSignal.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+
+                byte[]? report;
+                lock (_stateLock)
+                {
+                    if (_status != TasollerPlusConnectionStatus.Connected)
+                    {
+                        return;
+                    }
+
+                    // A report queued as the wait timed out still has a signal to consume.
+                    if (!pendingReportSignaled && _pendingLedReport != null)
+                    {
+                        continue;
+                    }
+
+                    report = _pendingLedReport ?? lastSentReport;
+                    _pendingLedReport = null;
+                }
+
                 if (report is null)
                 {
                     return;
@@ -183,16 +205,8 @@ namespace TasollerPlus.Connections
                     EndConnectionAfterTransferFailure(transferStatus, TasollerPlusConnectionStatus.LedSendError);
                     return;
                 }
-            }
-        }
 
-        private byte[]? TakePendingLedReport()
-        {
-            lock (_stateLock)
-            {
-                var report = _pendingLedReport;
-                _pendingLedReport = null;
-                return report;
+                lastSentReport = report;
             }
         }
 
