@@ -3,6 +3,25 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <Authors>Suira</Authors>
+    <Description>WindowsでTasoller Plusの検出・接続、入力取得、LED制御を行うC#ライブラリです。機器はWinUSBモードで使用します。</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Suiraaaa/tasoller-plus-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Suiraaaa/tasoller-plus-dotnet</RepositoryUrl>
+    <PackageTags>tasoller-plus;winusb;usb;windows</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../LICENSE" Pack="true" PackagePath="\" />
+    <None Update="README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="TasollerPlus.Tests" />
+  </ItemGroup>
 
 </Project>
